@@ -64,6 +64,7 @@ The script expects:
 
 from pathlib import Path
 import json
+import gc
 import time
 
 import numpy as np
@@ -78,8 +79,10 @@ from eccodes import (
     codes_get_array,
     codes_release,
 )
-
-
+# ------------------------------------------------------------
+# Overall script timer
+# ------------------------------------------------------------
+script_t0 = time.time()
 # ------------------------------------------------------------
 # User settings
 # ------------------------------------------------------------
@@ -102,20 +105,12 @@ MIN_MATCHED_DAYS = 2
 # in the dashboard map catalogue.
 MIN_MATCHED_DAYS_FOR_MAP = 2
 
-
 # ------------------------------------------------------------
 # GRIB input files
 # ------------------------------------------------------------
 # Directory containing the monthly GRIB files produced by script 00.
 GRIB_DIR = Path("/perm/pad/flood_cases/grib")
 
-# Current file pattern.
-#
-# The filename still says "flood", but the extracted parameter below is
-# river discharge: paramId 235270.
-#
-# You can later rename the GRIB files to something like
-# Globe_river_discharge_YYYYMM.grb if you want the naming to be clearer.
 grib_files = sorted(GRIB_DIR.glob("Globe_flood_*.grb"))
 
 # Optional fast test mode for development.
@@ -220,7 +215,6 @@ CONVERT_OBS_LOCAL_SOLAR_TIME_TO_UTC = True
 # ------------------------------------------------------------
 PROGRESS_EVERY_N_STATIONS = 1000
 
-
 # ------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------
@@ -230,8 +224,7 @@ def first_available(row, cols, default=""):
         if col in row.index and pd.notna(row.get(col)):
             return row.get(col)
     return default
-
-
+    
 def clean_id(value):
     """Clean station/source IDs read from CSV columns."""
     if pd.isna(value):
@@ -485,8 +478,8 @@ def model_area_km2(row):
         # Likely m² if very large; km² if moderate.
         if a > 1e6:
             return a / 1e6
-
-        return a
+        else:
+            return a
 
     return None
 
@@ -903,21 +896,6 @@ for i, row in stations.iterrows():
     station_id = f"station_{i:06d}"
     json_file = STATION_JSON_DIR / f"{station_id}.json"
 
-    # Per-station payload used by the dashboard when a station is clicked.
-    payload = {
-        "station_index": int(i),
-        "station_id": station_id,
-        "time": time_labels,
-        "model_discharge": np.round(model_q[i, :], 3).astype(float).tolist(),
-        "obs": obs,
-        "metrics": metrics,
-    }
-
-    json_file.write_text(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        encoding="utf-8",
-    )
-
     # Ancillary station diagnostics for the dashboard catalogue.
     obs_area_km2 = station_area_km2(row)
     mod_area_km2 = model_area_km2(row)
@@ -933,6 +911,9 @@ for i, row in stations.iterrows():
         float(row[model_lon_col]),
         float(row[model_lat_col]),
     )
+
+    station_id = f"station_{i:06d}"
+    json_file = STATION_JSON_DIR / f"{station_id}.json"
 
     cat = {
         "station_index": int(i),
@@ -972,6 +953,21 @@ for i, row in stations.iterrows():
     )
 
     if include_on_map:
+
+        payload = {
+            "station_index": int(i),
+            "station_id": station_id,
+            "time": time_labels,
+            "model_discharge": np.round(model_q[i, :], 3).astype(float).tolist(),
+            "obs": obs,
+            "metrics": metrics,
+        }
+
+        json_file.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
         catalog.append(cat)
 
     # The CSV contains only stations for which metrics could be computed.
@@ -985,6 +981,7 @@ for i, row in stations.iterrows():
             "Obs_file": "" if obs is None else obs.get("file", ""),
         })
 
+print(f"Stations retained for dashboard: {len(catalog):,}")
 
 # ------------------------------------------------------------
 # 5. Write dashboard data
@@ -999,4 +996,10 @@ pd.DataFrame(metrics_rows).to_csv(METRICS_CSV, index=False)
 print(f"Saved catalogue: {CATALOG_JSON}")
 print(f"Saved metrics CSV: {METRICS_CSV}")
 print(f"Saved station JSON directory: {STATION_JSON_DIR}")
-print(f"Done in {(time.time() - t0) / 60:.1f} min")
+print(f"Station processing time: {(time.time()-t0)/60:.1f} min")
+script_elapsed = time.time() - script_t0
+print("")
+print("========================================")
+print(f"TOTAL SCRIPT EXECUTION: {script_elapsed/60:.1f} min")
+print(f"TOTAL SCRIPT EXECUTION: {script_elapsed/3600:.2f} h")
+print("========================================")
