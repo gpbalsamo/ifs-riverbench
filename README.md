@@ -12,6 +12,7 @@ The workflow is composed of three Python scripts, located in the `Workflow/` dir
 python Workflow/00_extract_rivers_mars.py
 python Workflow/01_extract_hydrographs.py
 python Workflow/02_build_dashboard.py
+```
 
 ## Scripts
 `00_extract_rivers_mars.py`
@@ -19,7 +20,15 @@ Retrieves monthly global GRIB files from MARS.
 The script currently extracts:
 235270 = river discharge
 
+### Main outputs:
 The script writes monthly GRIB files and stores the corresponding MARS request files for reproducibility.
+
+```bash
+grib/
+├── Globe_river_201801.grb
+├── Globe_river_201801.grb
+└── Globe_river_201801.grb
+```
 
 `01_extract_hydrographs.py`
 Extracts model river discharge hydrographs at station locations.
@@ -39,6 +48,7 @@ dashboard_data/
 ├── stations/
 ├── stations_catalog.json
 └── global_station_metrics.csv
+```
 
 `02_build_dashboard.py`
 Builds an interactive HTML dashboard from the files produced by 01_extract_hydrographs.py.
@@ -53,4 +63,5 @@ The dashboard files are named according to the selected colouring mode, for exam
 ```bash
 global_station_dashboard_correlation.html
 global_station_dashboard_kge.html
+```
 
