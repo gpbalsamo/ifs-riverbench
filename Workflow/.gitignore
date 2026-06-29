@@ -1,0 +1,10 @@
+
+# Generated dashboard outputs
+dashboard_data/
+global_station_dashboard_*.html
+
+# Local/cache outputs
+*.zarr/
+*.npz
+__pycache__/
+03_upload_dashboard.sh
