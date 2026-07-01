@@ -5,7 +5,7 @@
 Upload ifs-riverbench dashboard HTML files and dashboard_data to ECMWF Sites.
 
 This script uploads:
-  1. all *.html files from /perm/pad/ifs-riverbench/Workflow
+  1. all *.html files from /perm/USER/ifs-riverbench/Workflow
   2. the dashboard_data directory recursively
 
 Authentication
@@ -21,7 +21,7 @@ Then run:
 Optional examples:
 
   python3 03_upload_dashboard.py --dry-run
-  python3 03_upload_dashboard.py --workflow-dir /perm/pad/ifs-riverbench/Workflow
+  python3 03_upload_dashboard.py --workflow-dir /perm/USER/ifs-riverbench/Workflow
   python3 03_upload_dashboard.py --html-pattern "global_station_dashboard_*.html"
   python3 03_upload_dashboard.py --html-only
 """
@@ -35,7 +35,7 @@ from sites.sdk import SitesClient
 from sites.sdk.sites import Site, Authenticator
 
 
-DEFAULT_WORKFLOW_DIR = Path("/perm/pad/ifs-riverbench/Workflow")
+DEFAULT_WORKFLOW_DIR = Path(f"/perm/{os.environ['USER']}/ifs-riverbench/Workflow")
 DEFAULT_DASHBOARD_DATA_DIRNAME = "dashboard_data"
 
 
@@ -65,8 +65,8 @@ def parse_args():
 
     parser.add_argument(
         "--space",
-        default="pad",
-        help='ECMWF Sites space. Default: "pad".',
+        default=os.environ['USER'],
+        help=f'ECMWF Sites space. Default: "{os.environ["USER"]}".',
     )
 
     parser.add_argument(

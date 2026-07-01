@@ -7,9 +7,11 @@ Convert the river discharge observation NetCDF archive to a chunked Zarr store.
 Recommended for repeated ifs-riverbench extraction over many experiments.
 
 Input:
-  /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
+  /perm/moi/disobs/obs_20260219/Qobs_24_1980-2025_withcaravan.nc
 
 Output:
+  /perm/{os.environ['USER']}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+for example:
   /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 
 Suggested chunking:
@@ -22,7 +24,7 @@ Zarr v3.
 from pathlib import Path
 import shutil
 import time
-
+import os
 import xarray as xr
 from dask.diagnostics import ProgressBar
 
@@ -30,8 +32,11 @@ from dask.diagnostics import ProgressBar
 # ------------------------------------------------------------
 # Settings
 # ------------------------------------------------------------
-IN_NC = Path("/perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc")
-OUT_ZARR = Path("/perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr")
+# FC add: generalise the path for the user passed the test:
+#python3 -c "import os; from pathlib import Path; print(Path(f'/perm/{os.environ[\"USER\"]}/flood_cases/Stations/#Qobs_24_1980-2025_withcaravan.zarr'))"
+
+IN_NC = Path("/perm/moi/disobs/obs_20260219/Qobs_24_1980-2025_withcaravan.nc")
+OUT_ZARR = Path(f"/perm/{os.environ['USER']}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr")
 
 TIME_CHUNK = 365
 STATION_CHUNK = 1024

@@ -108,15 +108,15 @@ from eccodes import (
 # ------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------
-DEFAULT_GRIB_ROOT = Path("/perm/pad/flood_cases/grib")
+DEFAULT_GRIB_ROOT = Path(f"/perm/{os.environ['USER']}/flood_cases/grib")
 DEFAULT_DASHBOARD_ROOT = Path("dashboard_data")
 
 DEFAULT_STATION_FILE = Path(
-    "/perm/pad/flood_cases/Stations/allstations_V1_2.csv"
+    f"/perm/pad/flood_cases/Stations/allstations_V1_2.csv"
 )
 
 DEFAULT_OBS_FILE = Path(
-    "/perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc"
+    "/perm/moi/disobs/obs_20260219/Qobs_24_1980-2025_withcaravan.nc"
 )
 
 # 235270 = river discharge

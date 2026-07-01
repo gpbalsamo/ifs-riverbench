@@ -69,23 +69,22 @@ python Workflow/00_extract_rivers_mars.py \\
   --expver iyp3 j1ee \\
   --date-start 2018-01-01 \\
   --date-end 2022-12-31 \\
-  --out-root /perm/pad/flood_cases/riverbench_grib
+  --out-root /perm/USER/flood_cases/riverbench_grib
 """
 
 from pathlib import Path
 import argparse
 import os
 import subprocess
-
 import pandas as pd
 
 
 # ------------------------------------------------------------
 # Defaults
 # ------------------------------------------------------------
-DEFAULT_OUT_ROOT = Path("/perm/pad/flood_cases/grib")
-DEFAULT_REQ_ROOT = Path("/perm/pad/flood_cases/mars_requests")
-DEFAULT_TMPDIR = Path("/perm/pad/flood_cases/tmp_mars")
+DEFAULT_OUT_ROOT = Path(f"/perm/{os.environ['USER']}/flood_cases/grib")
+DEFAULT_REQ_ROOT = Path(f"/perm/{os.environ['USER']}/flood_cases/mars_requests")
+DEFAULT_TMPDIR = Path(f"/perm/{os.environ['USER']}/flood_cases/tmp_mars")
 
 # MARS parameter:
 # 235270 = river discharge
