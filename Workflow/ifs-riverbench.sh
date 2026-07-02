@@ -33,7 +33,7 @@ THRESHOLD=0.02
 MAP_HEIGHT_VH=65
 RIVER_RESOL=50m
 #EXT_HYDRO=False
-EXT_HYDRO=True
+EXT_HYDRO=True # I have done extraction already
 
 # For monthly MARS archive:
 # date=first day of month, step=24/to/...,
@@ -115,7 +115,7 @@ for EXPVER in "${EXPERIMENTS[@]}"; do
     --date-end "${DATE_END}" \
     --resolution "${RESOLUTION}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
-    --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+    --obs-file /perm/ecmv9406/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 done
 fi
 
@@ -220,14 +220,14 @@ echo "Generated HTML dashboards in:"
 echo "  ${SCRIPT_DIR}"
 echo
 echo "To view dashboards on sites, run:"
-echo "  export ECMWF_SITES_TOKEN='here your token to access sites.ecmwf.int'"
+echo "  export ECMWF_SITES_TOKEN='f2b3656c84ea92b1c50f7e484b12a7e83cd5dfcd515599b957bd4fed141de60c'"
 
-echo "  python3 03_upload_dashboard_all_html_patched.py \
-   --workflow-dir /perm/${USER}/ifs-riverbench/Workflow \
+echo "  python3 03_upload_dashboard.py \
+   --workflow-dir /perm/ecmv9406/ifs-riverbench/Workflow \
    --html-pattern '*.html' \
    --html-only "
 
 echo
 echo "Then open the generated HTML files through:"
-echo "  https://sites.ecmwf.int/${USER}/riverbench/"
+echo "  https://sites.ecmwf.int/ecmv9406/riverbench/"
 echo "======================================================================"
