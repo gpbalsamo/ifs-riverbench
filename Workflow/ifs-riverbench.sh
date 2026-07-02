@@ -26,9 +26,9 @@ set -euo pipefail
 # ----------------------------------------------------------------------
 # Settings
 # ----------------------------------------------------------------------
-DATE_START="20180101"
-DATE_END="20221231"
-RESOLUTION=15
+DATE_START="20160601"
+DATE_END="20161231"
+RESOLUTION=3
 THRESHOLD=0.02
 MAP_HEIGHT_VH=65
 RIVER_RESOL=50m
@@ -39,6 +39,11 @@ EXT_HYDRO=True
 # date=first day of month, step=24/to/...,
 # but fields represent days of the same month.
 VALID_TIME_SHIFT_HOURS=-24
+
+EXPERIMENTS=(
+  "j6n9"   # GloFAS Init 5y fit+tuned parameters
+  "izay"   # 50r1 OPER control
+)
 
 EXPERIMENTS=(
   "j6ft"   # MSWEP3 hourly precipitation
