@@ -34,16 +34,15 @@ MAP_HEIGHT_VH=65
 RIVER_RESOL=50m
 #EXT_HYDRO=False
 EXT_HYDRO=True # I have done extraction already
+ARCHIVE_LAYOUT="monthly_steps"
+MARS_STEP_TEXT=""
+ARCHIVE_LAYOUT="daily_steps"
+MARS_STEP_TEXT="24"
 
 # For monthly MARS archive:
 # date=first day of month, step=24/to/...,
 # but fields represent days of the same month.
 VALID_TIME_SHIFT_HOURS=-24
-
-EXPERIMENTS=(
-  "j6n9"   # GloFAS Init 5y fit+tuned parameters
-  "izay"   # 50r1 OPER control
-)
 
 EXPERIMENTS=(
   "j6ft"   # MSWEP3 hourly precipitation
@@ -53,14 +52,20 @@ EXPERIMENTS=(
   "iyp3"   # 50r1 bugfix ERA5 control
 #  "iwya"   # 50r1 ERA5 control
 )
+EXPERIMENTS=(
+  "j6n9"   # GloFAS Init 5y fit+tuned parameters
+  "izay"   # 50r1 OPER control
+)
+
 
 # Reference experiment for pairwise difference dashboards.
 # REFERENCE_EXPVER="iwya"
 REFERENCE_EXPVER="iyp3"
+REFERENCE_EXPVER="izay"
 
 # Metric for dashboard colouring.
-# METRIC="correlation"
 METRIC="kge"
+ METRIC="correlation"
 
 # ----------------------------------------------------------------------
 # Make sure we are in the workflow directory or adjust this path.
@@ -93,7 +98,9 @@ if [[ ${EXT_HYDRO} == True ]] ; then
 python3 00_extract_rivers_mars.py \
   --expver "${EXPERIMENTS[@]}" \
   --date-start "${DATE_START}" \
-  --date-end "${DATE_END}"
+  --date-end "${DATE_END}" \
+  --archive-layout "${ARCHIVE_LAYOUT}" \
+  --step-text "${MARS_STEP_TEXT}"
 
 echo "[1/3] MARS extraction complete."
 fi
@@ -228,11 +235,11 @@ echo "To view dashboards on sites, run:"
 echo "  export ECMWF_SITES_TOKEN='f2b3656c84ea92b1c50f7e484b12a7e83cd5dfcd515599b957bd4fed141de60c'"
 
 echo "  python3 03_upload_dashboard.py \
-   --workflow-dir /perm/ecmv9406/ifs-riverbench/Workflow \
+   --workflow-dir /perm/${USER}/ifs-riverbench/Workflow \
    --html-pattern '*.html' \
    --html-only "
 
 echo
 echo "Then open the generated HTML files through:"
-echo "  https://sites.ecmwf.int/ecmv9406/riverbench/"
+echo "  https://sites.ecmwf.int/${USER}/riverbench/"
 echo "======================================================================"
