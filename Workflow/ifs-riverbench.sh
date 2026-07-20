@@ -12,6 +12,7 @@ set -euo pipefail
 #   j6fs : MSWEP3 monthly precipitation
 #   j6gq : EFAS 6-hourly precipitation
 #   iyp3 : 50r1 bugfix ERA5 control
+#   j7xs : 50r1 GP4HYDRO
 #   iwya : 50r1 ERA5 control
 #
 # Workflow:
@@ -26,46 +27,50 @@ set -euo pipefail
 # ----------------------------------------------------------------------
 # Settings
 # ----------------------------------------------------------------------
-DATE_START="20160601"
-DATE_END="20161231"
-RESOLUTION=3
+DATE_START="20180101"
+DATE_END="20221231"
+RESOLUTION=15
 THRESHOLD=0.02
 MAP_HEIGHT_VH=65
 RIVER_RESOL=50m
 #EXT_HYDRO=False
 EXT_HYDRO=True # I have done extraction already
-ARCHIVE_LAYOUT="monthly_steps"
-MARS_STEP_TEXT=""
 ARCHIVE_LAYOUT="daily_steps"
 MARS_STEP_TEXT="24"
+ARCHIVE_LAYOUT="monthly_steps"
+MARS_STEP_TEXT=""
 
 # For monthly MARS archive:
 # date=first day of month, step=24/to/...,
 # but fields represent days of the same month.
 VALID_TIME_SHIFT_HOURS=-24
-
-EXPERIMENTS=(
-  "j6ft"   # MSWEP3 hourly precipitation
-  "j6fu"   # MSWEP3 daily precipitation
-  "j6fs"   # MSWEP3 monthly precipitation
-  "j6gq"   # EFAS 6-hourly precipitation
-  "iyp3"   # 50r1 bugfix ERA5 control
-#  "iwya"   # 50r1 ERA5 control
-)
 EXPERIMENTS=(
   "j6n9"   # GloFAS Init 5y fit+tuned parameters
   "izay"   # 50r1 OPER control
 )
+EXPERIMENTS=(
+  "j7xt"   # GP4Hydro
+  "izay"   # 50r1 OPER control
+)
 
+EXPERIMENTS=(
+#  "j6ft"   # MSWEP3 hourly precipitation
+  "j6fu"   # MSWEP3 daily precipitation
+#  "j6fs"   # MSWEP3 monthly precipitation
+  "j6gq"   # EFAS 6-hourly precipitation
+  "iyp3"   # 50r1 bugfix ERA5 control
+  "j7xs"   # 50r1 GP4HYDRO
+#  "iwya"   # 50r1 ERA5 control
+)
 
 # Reference experiment for pairwise difference dashboards.
 # REFERENCE_EXPVER="iwya"
-REFERENCE_EXPVER="iyp3"
 REFERENCE_EXPVER="izay"
+REFERENCE_EXPVER="iyp3"
 
 # Metric for dashboard colouring.
+METRIC="correlation"
 METRIC="kge"
- METRIC="correlation"
 
 # ----------------------------------------------------------------------
 # Make sure we are in the workflow directory or adjust this path.
@@ -85,7 +90,6 @@ echo "Metric     : ${METRIC}"
 echo "======================================================================"
 echo
 
-
 # ======================================================================
 # 1. Extract river discharge GRIB files from MARS
 # ======================================================================
@@ -104,7 +108,6 @@ python3 00_extract_rivers_mars.py \
 
 echo "[1/3] MARS extraction complete."
 fi
-
 
 # ======================================================================
 # 2. Extract hydrographs and compute station metrics
@@ -127,12 +130,11 @@ for EXPVER in "${EXPERIMENTS[@]}"; do
     --date-end "${DATE_END}" \
     --resolution "${RESOLUTION}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
-    --obs-file /perm/ecmv9406/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+    --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 done
 fi
 
 echo "[2/3] Hydrograph extraction complete."
-
 
 # ======================================================================
 # 3. Build dashboards
@@ -141,7 +143,6 @@ echo
 echo "======================================================================"
 echo "[3/3] Building dashboards"
 echo "======================================================================"
-
 
 # ----------------------------------------------------------------------
 # 3a. Best metric class across all experiments
@@ -160,7 +161,6 @@ python3 02_build_dashboard.py \
   --colour-mode best_metric \
   --river-resolution ${RIVER_RESOL} \
   --map-height-vh "${MAP_HEIGHT_VH}"
-
 
 # ----------------------------------------------------------------------
 # 3b. Winning experiment at each station
@@ -216,7 +216,6 @@ done
 
 echo "[3/3] Dashboard generation complete."
 
-
 # ======================================================================
 # Final message
 # ======================================================================
@@ -232,7 +231,7 @@ echo "Generated HTML dashboards in:"
 echo "  ${SCRIPT_DIR}"
 echo
 echo "To view dashboards on sites, run:"
-echo "  export ECMWF_SITES_TOKEN='f2b3656c84ea92b1c50f7e484b12a7e83cd5dfcd515599b957bd4fed141de60c'"
+echo '  export ECMWF_SITES_TOKEN="<set securely outside Git>"'
 
 echo "  python3 03_upload_dashboard.py \
    --workflow-dir /perm/${USER}/ifs-riverbench/Workflow \

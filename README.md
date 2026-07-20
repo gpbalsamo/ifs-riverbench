@@ -326,7 +326,7 @@ Edit the settings at the top of `ifs-riverbench.sh` to change the experiment lis
 Set your ECMWF Sites token:
 
 ```bash
-export ECMWF_SITES_TOKEN="..."
+export ECMWF_SITES_TOKEN="<set securely outside Git>"
 ```
 
 Upload all HTML files and `dashboard_data/`:

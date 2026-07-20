@@ -936,6 +936,52 @@ html, body {
   height: 100% !important;
 }
 
+#ecdf-wrap {
+  border-top: 1px solid #ccc;
+  border-bottom: 1px solid #ccc;
+  background: #fafafa;
+  padding: 8px 10px 6px 10px;
+}
+
+#ecdf-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+#ecdf-exp-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ecdf-exp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+}
+
+#ecdf-diagnostics {
+  font-size: 11px;
+  color: #444;
+  margin-bottom: 4px;
+  line-height: 1.45;
+}
+
+#ecdf-plot {
+  width: 100%;
+  height: 245px;
+  min-height: 220px;
+}
+
 #bottom {
   flex: 1 0 300px;
   display: grid;
@@ -1022,6 +1068,19 @@ th, td {
     __MAP_DIV__
   </div>
 
+  <div id="ecdf-wrap">
+    <div id="ecdf-toolbar">
+      <span class="toolbar-title">Visible-extent empirical CDF</span>
+      <span id="ecdf-exp-select"></span>
+      <label>
+        <input id="ecdf-common-checkbox" type="checkbox">
+        Use common stations
+      </label>
+    </div>
+    <div id="ecdf-diagnostics" class="small">Initialising eCDF panel...</div>
+    <div id="ecdf-plot"></div>
+  </div>
+
   <div id="bottom">
     <div id="hydrograph">
       <p style="padding:12px;">Click a station to load hydrographs.</p>
@@ -1045,6 +1104,46 @@ const CONTROL_EXPVER = "__CONTROL_EXPVER__";
 const BEST_EXPERIMENT_MIN_IMPROVEMENT = __BEST_EXPERIMENT_MIN_IMPROVEMENT__;
 const WARN_SCALE_LOW = __WARN_SCALE_LOW__;
 const WARN_SCALE_HIGH = __WARN_SCALE_HIGH__;
+const ECDF_DEBOUNCE_MS = 150;
+
+const mapDiv = document.getElementById("map");
+const globalPreset = ZOOM_PRESETS.find(p => p.name === "Global") || {
+  lon: [-180, 180],
+  lat: [-60, 85]
+};
+
+const DEFAULT_EXTENT = {
+  south: Number(globalPreset.lat[0]),
+  west: Number(globalPreset.lon[0]),
+  north: Number(globalPreset.lat[1]),
+  east: Number(globalPreset.lon[1])
+};
+
+const DEFAULT_CENTER = {
+  lon: 0.5 * (DEFAULT_EXTENT.west + DEFAULT_EXTENT.east),
+  lat: 0.5 * (DEFAULT_EXTENT.south + DEFAULT_EXTENT.north)
+};
+
+let currentGeoCenter = {lon: DEFAULT_CENTER.lon, lat: DEFAULT_CENTER.lat};
+let currentGeoScale = 1.0;
+let currentVisibleExtent = {
+  south: DEFAULT_EXTENT.south,
+  west: DEFAULT_EXTENT.west,
+  north: DEFAULT_EXTENT.north,
+  east: DEFAULT_EXTENT.east
+};
+let ecdfDebounceTimer = null;
+let ecdfInitialised = false;
+
+function sanitizeUserPath(pathValue) {
+  if (pathValue === null || pathValue === undefined) return "";
+
+  const text = String(pathValue);
+
+  return text
+    .replace(/^\\/perm\\/[^/]+\\//, "/perm/$USER/")
+    .replace(/^\\/home\\/[^/]+\\//, "/home/$USER/");
+}
 
 function esc(value) {
   if (value === null || value === undefined) return "";
@@ -1082,6 +1181,481 @@ function median(values) {
   const mid = Math.floor(v.length / 2);
   if (v.length % 2 === 1) return v[mid];
   return 0.5 * (v[mid - 1] + v[mid]);
+}
+
+function normalizeLongitude(lon) {
+  const x = Number(lon);
+  if (!Number.isFinite(x)) return null;
+
+  const y = ((x + 180) % 360 + 360) % 360 - 180;
+
+  if (y === -180 && x > 0) return 180;
+  return y;
+}
+
+function clampLatitude(lat) {
+  const x = Number(lat);
+  if (!Number.isFinite(x)) return null;
+  return Math.max(-90, Math.min(90, x));
+}
+
+function finiteMetricValue(station, expver) {
+  if (!station || !station.runs || !station.runs[expver]) return null;
+  const v = Number(station.runs[expver][SELECTED_METRIC]);
+  return Number.isFinite(v) ? v : null;
+}
+
+function longitudeSpanDegrees(extent) {
+  const west = normalizeLongitude(extent.west);
+  const east = normalizeLongitude(extent.east);
+
+  if (west === null || east === null) return 360;
+
+  let span = (east - west + 360) % 360;
+  if (span === 0) span = 360;
+  return span;
+}
+
+function stationInsideExtent(station, extent) {
+  if (!station) return false;
+
+  const lat = Number(station.lat);
+  const lon = normalizeLongitude(station.lon);
+
+  if (!Number.isFinite(lat) || lon === null) return false;
+
+  const south = Number(extent.south);
+  const north = Number(extent.north);
+  if (!Number.isFinite(south) || !Number.isFinite(north)) return false;
+  if (lat < south || lat > north) return false;
+
+  const west = normalizeLongitude(extent.west);
+  const east = normalizeLongitude(extent.east);
+  if (west === null || east === null) return false;
+
+  const span = longitudeSpanDegrees(extent);
+  if (span >= 359.999) return true;
+
+  if (west <= east) {
+    return lon >= west && lon <= east;
+  }
+
+  return lon >= west || lon <= east;
+}
+
+function deriveExtentFromCenterScale(centerLon, centerLat, scale) {
+  const s = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
+
+  const defaultLonSpan = longitudeSpanDegrees(DEFAULT_EXTENT);
+  const defaultLatSpan = Number(DEFAULT_EXTENT.north) - Number(DEFAULT_EXTENT.south);
+
+  const lonSpan = Math.max(0.5, Math.min(360, defaultLonSpan / s));
+  const latSpan = Math.max(0.5, Math.min(180, defaultLatSpan / s));
+
+  const cLon = normalizeLongitude(centerLon);
+  const cLat = clampLatitude(centerLat);
+
+  const centerLonSafe = cLon === null ? DEFAULT_CENTER.lon : cLon;
+  const centerLatSafe = cLat === null ? DEFAULT_CENTER.lat : cLat;
+
+  return {
+    south: clampLatitude(centerLatSafe - 0.5 * latSpan),
+    west: normalizeLongitude(centerLonSafe - 0.5 * lonSpan),
+    north: clampLatitude(centerLatSafe + 0.5 * latSpan),
+    east: normalizeLongitude(centerLonSafe + 0.5 * lonSpan)
+  };
+}
+
+function readRangeFromPayload(payload, keyBase) {
+  if (!payload) return null;
+
+  if (Array.isArray(payload[keyBase]) && payload[keyBase].length >= 2) {
+    return [Number(payload[keyBase][0]), Number(payload[keyBase][1])];
+  }
+
+  const k0 = keyBase + "[0]";
+  const k1 = keyBase + "[1]";
+
+  if (payload[k0] !== undefined && payload[k1] !== undefined) {
+    return [Number(payload[k0]), Number(payload[k1])];
+  }
+
+  return null;
+}
+
+function deriveInitialExtentFromMap() {
+  const fallback = {
+    south: DEFAULT_EXTENT.south,
+    west: DEFAULT_EXTENT.west,
+    north: DEFAULT_EXTENT.north,
+    east: DEFAULT_EXTENT.east
+  };
+
+  if (!mapDiv || !mapDiv.layout || !mapDiv.layout.geo) {
+    return fallback;
+  }
+
+  const geo = mapDiv.layout.geo;
+  const lonRange = geo.lonaxis && Array.isArray(geo.lonaxis.range) ? geo.lonaxis.range : null;
+  const latRange = geo.lataxis && Array.isArray(geo.lataxis.range) ? geo.lataxis.range : null;
+
+  if (lonRange && latRange) {
+    const west = normalizeLongitude(lonRange[0]);
+    const east = normalizeLongitude(lonRange[1]);
+    const south = clampLatitude(Math.min(latRange[0], latRange[1]));
+    const north = clampLatitude(Math.max(latRange[0], latRange[1]));
+
+    if (west !== null && east !== null && south !== null && north !== null) {
+      return {south: south, west: west, north: north, east: east};
+    }
+  }
+
+  const centerLon = geo.center && geo.center.lon !== undefined ? geo.center.lon : DEFAULT_CENTER.lon;
+  const centerLat = geo.center && geo.center.lat !== undefined ? geo.center.lat : DEFAULT_CENTER.lat;
+  const scale = geo.projection && geo.projection.scale !== undefined ? Number(geo.projection.scale) : 1.0;
+
+  currentGeoCenter = {
+    lon: normalizeLongitude(centerLon) ?? DEFAULT_CENTER.lon,
+    lat: clampLatitude(centerLat) ?? DEFAULT_CENTER.lat
+  };
+  currentGeoScale = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
+
+  return deriveExtentFromCenterScale(currentGeoCenter.lon, currentGeoCenter.lat, currentGeoScale);
+}
+
+function updateExtentCacheFromRelayout(payload) {
+  let changed = false;
+  let hasExplicitRanges = false;
+  let hasCenterLon = false;
+  let hasCenterLat = false;
+  let hasScale = false;
+
+  const lonRange = readRangeFromPayload(payload, "geo.lonaxis.range");
+  const latRange = readRangeFromPayload(payload, "geo.lataxis.range");
+
+  if (lonRange) {
+    const west = normalizeLongitude(lonRange[0]);
+    const east = normalizeLongitude(lonRange[1]);
+    if (west !== null && east !== null) {
+      currentVisibleExtent.west = west;
+      currentVisibleExtent.east = east;
+      hasExplicitRanges = true;
+      changed = true;
+    }
+  }
+
+  if (latRange) {
+    const south = clampLatitude(Math.min(latRange[0], latRange[1]));
+    const north = clampLatitude(Math.max(latRange[0], latRange[1]));
+    if (south !== null && north !== null) {
+      currentVisibleExtent.south = south;
+      currentVisibleExtent.north = north;
+      hasExplicitRanges = true;
+      changed = true;
+    }
+  }
+
+  if (payload && payload["geo.center.lon"] !== undefined) {
+    const lon = normalizeLongitude(payload["geo.center.lon"]);
+    if (lon !== null) {
+      currentGeoCenter.lon = lon;
+      hasCenterLon = true;
+      changed = true;
+    }
+  }
+
+  if (payload && payload["geo.center.lat"] !== undefined) {
+    const lat = clampLatitude(payload["geo.center.lat"]);
+    if (lat !== null) {
+      currentGeoCenter.lat = lat;
+      hasCenterLat = true;
+      changed = true;
+    }
+  }
+
+  if (payload && payload["geo.projection.scale"] !== undefined) {
+    const scale = Number(payload["geo.projection.scale"]);
+    if (Number.isFinite(scale) && scale > 0) {
+      const previousScale = currentGeoScale;
+      currentGeoScale = scale;
+      hasScale = true;
+
+      if (!hasExplicitRanges) {
+        const oldLonSpan = longitudeSpanDegrees(currentVisibleExtent);
+        const oldLatSpan = Math.max(0.5, Number(currentVisibleExtent.north) - Number(currentVisibleExtent.south));
+        const ratio = previousScale > 0 ? (previousScale / currentGeoScale) : 1.0;
+
+        const newLonSpan = Math.max(0.5, Math.min(360, oldLonSpan * ratio));
+        const newLatSpan = Math.max(0.5, Math.min(180, oldLatSpan * ratio));
+
+        currentVisibleExtent.west = normalizeLongitude(currentGeoCenter.lon - 0.5 * newLonSpan);
+        currentVisibleExtent.east = normalizeLongitude(currentGeoCenter.lon + 0.5 * newLonSpan);
+        currentVisibleExtent.south = clampLatitude(currentGeoCenter.lat - 0.5 * newLatSpan);
+        currentVisibleExtent.north = clampLatitude(currentGeoCenter.lat + 0.5 * newLatSpan);
+      }
+
+      changed = true;
+    }
+  }
+
+  if (!hasExplicitRanges && !hasScale && (hasCenterLon || hasCenterLat)) {
+    const lonSpan = longitudeSpanDegrees(currentVisibleExtent);
+    const latSpan = Math.max(0.5, Number(currentVisibleExtent.north) - Number(currentVisibleExtent.south));
+
+    currentVisibleExtent.west = normalizeLongitude(currentGeoCenter.lon - 0.5 * lonSpan);
+    currentVisibleExtent.east = normalizeLongitude(currentGeoCenter.lon + 0.5 * lonSpan);
+    currentVisibleExtent.south = clampLatitude(currentGeoCenter.lat - 0.5 * latSpan);
+    currentVisibleExtent.north = clampLatitude(currentGeoCenter.lat + 0.5 * latSpan);
+    changed = true;
+  }
+
+  return changed;
+}
+
+function ecdfArrays(values) {
+  const sorted = values
+    .map(Number)
+    .filter(x => Number.isFinite(x))
+    .sort((a, b) => a - b);
+
+  const n = sorted.length;
+  const y = [];
+
+  for (let i = 0; i < n; i++) {
+    y.push((i + 1) / n);
+  }
+
+  return {x: sorted, y: y};
+}
+
+function initEcdfPanel() {
+  const expSelect = document.getElementById("ecdf-exp-select");
+  if (expSelect) {
+    expSelect.innerHTML = "";
+
+    const label = document.createElement("span");
+    label.textContent = "Experiments:";
+    expSelect.appendChild(label);
+
+    for (const expver of EXPVERS) {
+      const chip = document.createElement("label");
+      chip.className = "ecdf-exp-chip";
+
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = expver;
+      cb.className = "ecdf-exp-checkbox";
+      cb.checked = true;
+      cb.addEventListener("change", function() {
+        updateEcdfPanel();
+      });
+
+      const marker = document.createElement("span");
+      marker.style.color = EXPERIMENT_COLOURS[expver] || "black";
+      marker.style.fontWeight = "bold";
+      marker.textContent = "●";
+
+      const name = document.createElement("span");
+      name.textContent = expver;
+
+      chip.appendChild(cb);
+      chip.appendChild(marker);
+      chip.appendChild(name);
+
+      expSelect.appendChild(chip);
+    }
+  }
+
+  const checkbox = document.getElementById("ecdf-common-checkbox");
+  if (checkbox) {
+    checkbox.checked = EXPVERS.length > 1;
+    checkbox.disabled = EXPVERS.length <= 1;
+    checkbox.addEventListener("change", function() {
+      updateEcdfPanel();
+    });
+  }
+
+  Plotly.newPlot(
+    "ecdf-plot",
+    [],
+    {
+      title: {text: "Empirical CDF in visible extent", x: 0.01, xanchor: "left"},
+      margin: {l: 58, r: 15, t: 40, b: 50},
+      xaxis: {title: SELECTED_METRIC, range: [-1, 1], automargin: true},
+      yaxis: {title: "Empirical CDF", range: [0, 1], automargin: true},
+      showlegend: true,
+      legend: {orientation: "h", x: 0, y: -0.24, yanchor: "top"},
+      paper_bgcolor: "white",
+      plot_bgcolor: "white"
+    },
+    {
+      responsive: true,
+      displaylogo: false,
+      modeBarButtonsToRemove: ["select2d", "lasso2d"]
+    }
+  );
+
+  ecdfInitialised = true;
+}
+
+function selectedEcdfExperiments() {
+  const boxes = Array.from(document.querySelectorAll(".ecdf-exp-checkbox"));
+
+  if (boxes.length === 0) {
+    return EXPVERS.slice();
+  }
+
+  return boxes.filter(cb => cb.checked).map(cb => cb.value);
+}
+
+function updateEcdfPanel() {
+  if (!ecdfInitialised) return;
+
+  const diagnostics = document.getElementById("ecdf-diagnostics");
+  const checkbox = document.getElementById("ecdf-common-checkbox");
+  const activeExpvers = selectedEcdfExperiments();
+  const useCommon = !!(checkbox && checkbox.checked && activeExpvers.length > 1);
+
+  const stationsInExtent = STATIONS.filter(station => stationInsideExtent(station, currentVisibleExtent));
+
+  const commonStations = useCommon
+    ? stationsInExtent.filter(station => activeExpvers.every(expver => finiteMetricValue(station, expver) !== null))
+    : [];
+
+  const valuesByExp = {};
+  const validCounts = {};
+  const medians = {};
+  const traces = [];
+
+  for (const expver of activeExpvers) {
+    const sample = useCommon
+      ? commonStations.map(station => finiteMetricValue(station, expver))
+      : stationsInExtent.map(station => finiteMetricValue(station, expver));
+
+    const valid = sample.filter(v => Number.isFinite(v));
+    valuesByExp[expver] = valid;
+    validCounts[expver] = valid.length;
+    medians[expver] = median(valid);
+
+    if (valid.length > 0) {
+      const ecdf = ecdfArrays(valid);
+      traces.push({
+        x: ecdf.x,
+        y: ecdf.y,
+        type: "scatter",
+        mode: "lines",
+        name: expver + " (n=" + valid.length + ")",
+        line: {
+          color: EXPERIMENT_COLOURS[expver] || undefined,
+          width: 2.0
+        },
+        hovertemplate:
+          expver +
+          "<br>" + SELECTED_METRIC + "=%{x:.4f}" +
+          "<br>F(x)=%{y:.3f}" +
+          "<extra></extra>"
+      });
+    }
+  }
+
+  const commonCount = commonStations.length;
+  const anyValid = traces.length > 0;
+
+  let smallSampleWarning = false;
+  if (useCommon) {
+    smallSampleWarning = commonCount > 0 && commonCount < 10;
+  } else {
+    smallSampleWarning = activeExpvers.some(expver => validCounts[expver] > 0 && validCounts[expver] < 10);
+  }
+
+  const boundsText =
+    "Visible bounds: " +
+    "south=" + fmt(currentVisibleExtent.south, 3) + ", " +
+    "west=" + fmt(currentVisibleExtent.west, 3) + ", " +
+    "north=" + fmt(currentVisibleExtent.north, 3) + ", " +
+    "east=" + fmt(currentVisibleExtent.east, 3);
+
+  const countBits = [];
+  for (const expver of activeExpvers) {
+    countBits.push(esc(expver) + ": n=" + esc(validCounts[expver]));
+  }
+
+  const medianBits = [];
+  for (const expver of activeExpvers) {
+    medianBits.push(esc(expver) + ": " + esc(fmt(medians[expver], 4)));
+  }
+
+  const noExperimentSelected = activeExpvers.length === 0;
+
+  let diagnosticsHtml =
+    "<div><b>Stations inside extent:</b> " + esc(stationsInExtent.length) + "</div>" +
+    "<div><b>Experiments shown:</b> " + esc(activeExpvers.join(", ")) + "</div>" +
+    (useCommon
+      ? "<div><b>Common-station count:</b> " + esc(commonCount) + "</div>"
+      : "") +
+    "<div><b>Valid counts by experiment:</b> " + (countBits.length ? countBits.join("; ") : "none") + "</div>" +
+    "<div><b>Medians by experiment:</b> " + (medianBits.length ? medianBits.join("; ") : "none") + "</div>" +
+    "<div><b>" + esc(boundsText) + "</b></div>";
+
+  if (noExperimentSelected) {
+    diagnosticsHtml += "<div class='warning'>Select at least one experiment to draw the eCDF.</div>";
+  }
+
+  if (!anyValid && !noExperimentSelected) {
+    diagnosticsHtml += "<div class='warning'>No valid stations in the visible map extent.</div>";
+  }
+
+  if (smallSampleWarning) {
+    diagnosticsHtml += "<div class='warning'>Small sample warning: fewer than 10 stations in the selected sample.</div>";
+  }
+
+  if (diagnostics) diagnostics.innerHTML = diagnosticsHtml;
+
+  const layout = {
+    title: {
+      text: "Empirical CDF in visible extent" + (useCommon ? " (common stations)" : ""),
+      x: 0.01,
+      xanchor: "left"
+    },
+    margin: {l: 58, r: 15, t: 40, b: 50},
+    xaxis: {title: SELECTED_METRIC, range: [-1, 1], automargin: true},
+    yaxis: {title: "Empirical CDF", range: [0, 1], automargin: true},
+    showlegend: true,
+    legend: {orientation: "h", x: 0, y: -0.24, yanchor: "top"},
+    paper_bgcolor: "white",
+    plot_bgcolor: "white"
+  };
+
+  if (!anyValid) {
+    layout.annotations = [{
+      text: noExperimentSelected
+        ? "Select at least one experiment to draw the eCDF."
+        : "No valid stations in the visible map extent.",
+      x: 0.5,
+      y: 0.55,
+      xref: "paper",
+      yref: "paper",
+      showarrow: false,
+      font: {size: 13, color: "#555"}
+    }];
+  }
+
+  Plotly.react("ecdf-plot", traces, layout, {
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ["select2d", "lasso2d"]
+  });
+}
+
+function scheduleEcdfUpdate() {
+  if (ecdfDebounceTimer !== null) {
+    window.clearTimeout(ecdfDebounceTimer);
+  }
+
+  ecdfDebounceTimer = window.setTimeout(function() {
+    ecdfDebounceTimer = null;
+    updateEcdfPanel();
+  }, ECDF_DEBOUNCE_MS);
 }
 
 function computeObsModelScaleDiagnostic(payloadsByExpver) {
@@ -1163,6 +1737,7 @@ function zoomToPreset(preset) {
   }
 
   resizePlots();
+  scheduleEcdfUpdate();
 }
 
 function resetGlobalZoom() {
@@ -1345,8 +1920,9 @@ function stationInfo(station, payloadsByExpver) {
     const payload = payloadsByExpver[expver];
 
     if (payload && payload.obs) {
+      const obsPath = sanitizeUserPath(payload.obs.file);
       s += "<div class='small'><b>Obs file:</b><br><span class='code'>" +
-           esc(payload.obs.file) + "</span></div>";
+           esc(obsPath) + "</span></div>";
       break;
     }
   }
@@ -1505,6 +2081,7 @@ function resizePlots() {
   const map = document.getElementById("map");
   const mapWrap = document.getElementById("map-wrap");
   const hydro = document.getElementById("hydrograph");
+  const ecdf = document.getElementById("ecdf-plot");
 
   if (map && mapWrap && window.Plotly) {
     const w = Math.max(300, Math.floor(mapWrap.clientWidth));
@@ -1520,9 +2097,17 @@ function resizePlots() {
   if (hydro && hydro.data && window.Plotly) {
     Plotly.Plots.resize(hydro);
   }
+
+  if (ecdf && ecdf.data && window.Plotly) {
+    Plotly.Plots.resize(ecdf);
+  }
 }
 
 buildZoomSelect();
+initEcdfPanel();
+
+currentVisibleExtent = deriveInitialExtentFromMap();
+scheduleEcdfUpdate();
 
 window.addEventListener("resize", function() {
   window.setTimeout(resizePlots, 80);
@@ -1530,7 +2115,10 @@ window.addEventListener("resize", function() {
 
 window.setTimeout(resizePlots, 200);
 
-const mapDiv = document.getElementById("map");
+mapDiv.on("plotly_relayout", function(eventData) {
+  updateExtentCacheFromRelayout(eventData || {});
+  scheduleEcdfUpdate();
+});
 
 mapDiv.on("plotly_click", function(data) {
   if (!data || !data.points || data.points.length === 0) return;
