@@ -1134,6 +1134,7 @@ let currentVisibleExtent = {
 };
 let ecdfDebounceTimer = null;
 let ecdfInitialised = false;
+let currentStationIndex = null;
 
 function sanitizeUserPath(pathValue) {
   if (pathValue === null || pathValue === undefined) return "";
@@ -1448,6 +1449,9 @@ function initEcdfPanel() {
       cb.checked = true;
       cb.addEventListener("change", function() {
         updateEcdfPanel();
+        if (currentStationIndex !== null) {
+          loadAndPlotStation(currentStationIndex);
+        }
       });
 
       const marker = document.createElement("span");
@@ -1943,8 +1947,8 @@ async function fetchStationPayload(expver, run) {
   return await response.json();
 }
 
-function chooseObsPayload(payloadsByExpver) {
-  for (const expver of EXPVERS) {
+function chooseObsPayload(payloadsByExpver, expvers = EXPVERS) {
+  for (const expver of expvers) {
     const payload = payloadsByExpver[expver];
     if (payload && payload.obs) return payload.obs;
   }
@@ -1952,6 +1956,8 @@ function chooseObsPayload(payloadsByExpver) {
 }
 
 async function loadAndPlotStation(i) {
+  currentStationIndex = i;
+
   const station = STATIONS[i];
 
   if (!station) {
@@ -1983,8 +1989,9 @@ async function loadAndPlotStation(i) {
   }
 
   const traces = [];
+  const activeExpvers = selectedEcdfExperiments();
 
-  for (const expver of EXPVERS) {
+  for (const expver of activeExpvers) {
     const payload = payloadsByExpver[expver];
     if (!payload) continue;
 
@@ -2009,7 +2016,9 @@ async function loadAndPlotStation(i) {
     });
   }
 
-  const obs = chooseObsPayload(payloadsByExpver);
+  const obs = activeExpvers.length > 0
+    ? chooseObsPayload(payloadsByExpver, activeExpvers)
+    : null;
 
   if (obs) {
     traces.push({
@@ -2026,8 +2035,13 @@ async function loadAndPlotStation(i) {
   }
 
   if (traces.length === 0) {
-    document.getElementById("hydrograph").innerHTML =
-      "<p style='padding:12px;color:red;'>No hydrograph could be loaded.</p>";
+    if (activeExpvers.length === 0) {
+      document.getElementById("hydrograph").innerHTML =
+        "<p style='padding:12px;color:#444;'>Select at least one experiment to draw hydrographs.</p>";
+    } else {
+      document.getElementById("hydrograph").innerHTML =
+        "<p style='padding:12px;color:red;'>No hydrograph could be loaded.</p>";
+    }
   } else {
     Plotly.newPlot(
       "hydrograph",
