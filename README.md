@@ -1,67 +1,109 @@
 # ifs-riverbench
 
-`ifs-riverbench` benchmarks IFS river discharge simulations against observed streamflow data and builds interactive multi-experiment dashboards.
+`ifs-riverbench` helps you compare river discharge experiments against observations and produce interactive HTML dashboards.
 
-The workflow retrieves archived IFS river discharge fields from MARS, extracts model hydrographs at river-gauge locations, compares them with observed discharge, and generates HTML dashboards for visual inspection of model skill, experiment winners, and pairwise experiment differences.
+At a high level, you run a pipeline that:
+1. retrieves model discharge data;
+2. extracts time series at gauge stations;
+3. computes benchmark metrics;
+4. builds visual dashboards to compare experiments.
 
-## Overview
+![Example benchmark visual](ifs-riverbench.png)
 
-The workflow is organised around the scripts in `Workflow/`:
+## Quick Start (non-expert)
+
+If you are new to the workflow, follow these exact steps first.
+
+### 1) Go to a large permanent directory
+
+Use `$PERM` if available, or any permanent directory of your choice.
+
+```bash
+cd $PERM
+```
+
+Example if `$PERM` is not set:
+
+```bash
+cd /perm/$USER
+```
+
+### 2) Clone the repository
+
+```bash
+git clone https://github.com/gpbalsamo/ifs-riverbench.git
+cd ifs-riverbench
+```
+
+### 3) Move into the workflow directory
+
+```bash
+cd Workflow
+```
+
+### 4) Run the full benchmark workflow
+
+```bash
+bash ifs-riverbench.sh
+```
+
+This creates station data under `dashboard_data/` and HTML dashboards in `site_bundle/`.
+
+### 5) Upload dashboards (optional)
+
+```bash
+export ECMWF_SITES_TOKEN="<set securely outside Git>"
+python3 03_upload_dashboard.py --workflow-dir /perm/$USER/ifs-riverbench/Workflow/site_bundle
+```
+
+## What each script does
+
+The workflow is organized around the scripts in `Workflow/`:
 
 ```text
 Workflow/
 ├── 00_convert_qobs_to_zarr.py      # optional one-time conversion of observations to Zarr
-├── 00_extract_rivers_mars.py       # retrieve monthly river discharge GRIB files from MARS
-├── 01_extract_hydrographs.py       # sample model discharge, read observations, compute metrics
-├── 02_build_dashboard.py           # build multi-experiment HTML dashboards
-├── 03_upload_dashboard.py          # upload dashboards to ECMWF Sites
-└── ifs-riverbench.sh               # full workflow driver
+├── 00_extract_rivers_mars.py       # retrieve river discharge GRIB files from MARS
+├── 01_extract_hydrographs.py       # extract station hydrographs and compute metrics
+├── 02_build_dashboard.py           # create interactive HTML dashboards
+├── 03_upload_dashboard.py          # upload generated dashboards to ECMWF Sites
+├── 04_prepare_sites_bundle.py      # prepare a single directory to upload
+├── benchmark_cmf_vs_glofas5.py     # dedicated CaMa-Flood vs GloFAS benchmark engine
+├── benchmark_cmf_vs_glofas5.sh     # launcher for the long-period benchmark
+├── build_benchmark_html_index.py   # build HTML index pages for benchmark plots
+└── ifs-riverbench.sh               # end-to-end driver script
 ```
 
-The main benchmark output is a set of HTML dashboards plus the supporting `dashboard_data/` directory.
+## Detailed usage
 
-## Parameter convention
+## Inputs
 
-The river discharge parameter is:
+### IFS river discharge from MARS
 
-```text
-235270 = river discharge
-235275 = flood fraction
-```
-
-The current workflow focuses on `235270`.
-
-## Input data
-
-### IFS river discharge GRIB files
-
-`00_extract_rivers_mars.py` retrieves monthly GRIB files from MARS. The expected archive convention is:
+`00_extract_rivers_mars.py` retrieves GRIB files using this archive convention:
 
 ```text
 date = first day of month
 time = 00 UTC
-step = 24, 48, 72, ... up to the last day of the month
+step = 24, 48, 72, ... up to month end
 ```
 
-For example, January 2018 is retrieved as:
+Example January request:
 
 ```text
 date = 20180101
 step = 24/to/744/by/24
 ```
 
-The output layout is:
+Typical output path:
 
 ```text
-/perm/pad/flood_cases/grib/<expver>/<date_start>_<date_end>/
-├── Globe_river_discharge_<expver>_201801.grb
-├── Globe_river_discharge_<expver>_201802.grb
-└── ...
+/perm/<user>/flood_cases/grib/<expver>/<date_start>_<date_end>/
 ```
 
 ### Station metadata
 
-The station metadata CSV is expected to contain station coordinates, observed upstream area, and CaMa-Flood model-grid information at several resolutions:
+Expected CSV contains station location and CaMa-Flood lookup columns, for example:
 
 ```text
 Id, Name, StatLon, StatLat, ProvArea, River, Country,
@@ -79,7 +121,7 @@ Default path:
 
 ### Observed discharge
 
-Observed discharge can be read either from NetCDF or from a Zarr store.
+Use NetCDF or Zarr. Zarr is recommended for speed in long multi-experiment runs.
 
 Default NetCDF:
 
@@ -87,47 +129,31 @@ Default NetCDF:
 /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
 ```
 
-Recommended Zarr store:
+Recommended Zarr:
 
 ```text
 /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 ```
 
-Expected dimensions and variables:
+## Optional one-time prep
 
-```text
-dimensions:
-  time
-  station
-
-variables:
-  time(time)
-  statid(station)
-  discharge(time, station)
-```
-
-The observation `statid` is assumed to match the station CSV `Id`.
-
-## Optional one-time step: convert observations to Zarr
-
-For multi-year, multi-experiment workflows, Zarr is much faster than repeated NetCDF fancy indexing. Convert the observation archive once with:
+Convert observations to Zarr:
 
 ```bash
 python3 00_convert_qobs_to_zarr.py
 ```
 
-The recommended Zarr chunking is:
+Recommended chunking:
 
 ```text
-time    = 365
-station = 1024
+time=365, station=1024
 ```
 
-The script writes a Zarr v2 store to avoid warnings about consolidated metadata in Zarr v3.
+## Step-by-step commands
 
-## Step 1: retrieve river discharge from MARS
+### Step 1: retrieve discharge from MARS
 
-Retrieve one experiment:
+Single experiment:
 
 ```bash
 python3 00_extract_rivers_mars.py \
@@ -136,7 +162,7 @@ python3 00_extract_rivers_mars.py \
   --date-end 20221231
 ```
 
-Retrieve several experiments:
+Multiple experiments:
 
 ```bash
 python3 00_extract_rivers_mars.py \
@@ -145,22 +171,22 @@ python3 00_extract_rivers_mars.py \
   --date-end 20221231
 ```
 
-Main options:
+Key options:
 
 ```text
 --expver       one or more experiment IDs
---date-start   start date, YYYYMMDD or YYYY-MM-DD
---date-end     end date, YYYYMMDD or YYYY-MM-DD
---out-root     root directory for GRIB output
---req-root     root directory for saved MARS requests
---params       MARS parameter list, default 235270
---overwrite    overwrite existing non-empty GRIB files
---dry-run      write requests but do not run MARS
+--date-start   start date (YYYYMMDD or YYYY-MM-DD)
+--date-end     end date (YYYYMMDD or YYYY-MM-DD)
+--out-root     output root for GRIB files
+--req-root     output root for saved MARS request files
+--params       MARS parameter list (default: 235270)
+--overwrite    overwrite existing GRIB files
+--dry-run      write requests only, do not retrieve
 ```
 
-## Step 2: extract station hydrographs and compute metrics
+### Step 2: extract station hydrographs and metrics
 
-Extract one experiment using the recommended Zarr observations:
+With Zarr observations:
 
 ```bash
 python3 01_extract_hydrographs.py \
@@ -172,7 +198,7 @@ python3 01_extract_hydrographs.py \
   --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 ```
 
-Use NetCDF observations instead:
+With NetCDF observations:
 
 ```bash
 python3 01_extract_hydrographs.py \
@@ -184,17 +210,7 @@ python3 01_extract_hydrographs.py \
   --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
 ```
 
-The `--valid-time-shift-hours -24` option is needed for the monthly archive convention where `date=first day of month` and `step=24` represents the first day of the month.
-
-For each station, the script:
-
-1. reads station metadata;
-2. uses the selected CaMa-Flood columns, for example `Cama15lon`, `Cama15lat`, `Cama15area`;
-3. finds the nearest GRIB grid point once;
-4. extracts the model discharge time series;
-5. reads the corresponding observed discharge;
-6. computes KGE, correlation and RMSE on common daily means;
-7. writes dashboard-ready JSON and CSV outputs.
+Why `--valid-time-shift-hours -24` is often needed: monthly archive files are stored with `date=first day of month`, while each `step` represents a later valid day.
 
 Output layout:
 
@@ -208,13 +224,9 @@ dashboard_data/<expver>/<date_start>_<date_end>_<resolution>arcmin/
 └── global_station_metrics.csv
 ```
 
-## Step 3: build dashboards
+### Step 3: build dashboards
 
-`02_build_dashboard.py` supports one or more experiments.
-
-### Best metric dashboard
-
-Stations are coloured by the best KGE or correlation achieved by any experiment:
+#### A) Best metric mode
 
 ```bash
 python3 02_build_dashboard.py \
@@ -226,9 +238,7 @@ python3 02_build_dashboard.py \
   --colour-mode best_metric
 ```
 
-### Best experiment dashboard
-
-Stations are coloured by the experiment that performs best. A control experiment can be specified, and stations are coloured grey when the winning experiment does not improve over the control by at least the chosen threshold.
+#### B) Best experiment mode
 
 ```bash
 python3 02_build_dashboard.py \
@@ -242,15 +252,15 @@ python3 02_build_dashboard.py \
   --best-experiment-min-improvement 0.02
 ```
 
-### Pairwise difference dashboard
+#### C) Pairwise difference mode
 
-For pairwise differences, the dashboard computes:
+This mode computes:
 
 ```text
 second experiment - first experiment
 ```
 
-For example, to show `j6fu - iyp3`:
+Example (`j6fu - iyp3`):
 
 ```bash
 python3 02_build_dashboard.py \
@@ -263,61 +273,42 @@ python3 02_build_dashboard.py \
   --difference-threshold 0.02
 ```
 
-Stations with an absolute difference below the threshold are coloured grey.
-
-### Useful dashboard options
+Useful dashboard options:
 
 ```text
 --metric                              kge or correlation
 --colour-mode                         best_metric, best_experiment, experiment_difference
 --control-expver                      control experiment for best_experiment mode
---best-experiment-min-improvement     threshold above control for best_experiment mode
+--best-experiment-min-improvement     threshold above control
 --difference-threshold                neutral threshold for pairwise differences
---map-height-vh                       map height in viewport-height units
---river-resolution                    Natural Earth river layer resolution: 110m, 50m, 10m
+--map-height-vh                       map height (viewport units)
+--river-resolution                    110m, 50m, 10m
 --projection                          equirectangular or natural earth
 --no-rivers                           disable river overlay
 ```
 
-The dashboard station panel shows:
+## Full driver script
 
-```text
-station metadata
-observed and model upstream areas
-relative upstream-area difference
-KGE, correlation and RMSE by experiment
-best experiment
-obs/model median-ratio diagnostic
-```
-
-The obs/model median-ratio diagnostic is intended to flag possible scale, unit, or basin-area mismatches. The dashboard does not apply a blind unit conversion.
-
-## Full workflow driver
-
-The full workflow can be run with:
+Run everything end-to-end with:
 
 ```bash
-./ifs-riverbench.sh
+bash ifs-riverbench.sh
 ```
 
-The driver currently sets:
+The driver executes:
+1. extraction from MARS;
+2. hydrograph and metric extraction;
+3. dashboard generation (best metric, best experiment, and pairwise differences);
+4. preparation of a single upload bundle directory.
+
+## Parameter convention
 
 ```text
-DATE_START=20180101
-DATE_END=20221231
-RESOLUTION=15
-VALID_TIME_SHIFT_HOURS=-24
-REFERENCE_EXPVER=iyp3
-METRIC=kge
+235270 = river discharge
+235275 = flood fraction
 ```
 
-and runs:
-
-1. MARS extraction;
-2. station hydrograph extraction with Zarr observations;
-3. best-metric dashboard;
-4. best-experiment dashboard;
-5. pairwise experiment-difference dashboards against the reference experiment.
+Current workflow focus is `235270`.
 
 Edit the settings at the top of `ifs-riverbench.sh` to change the experiment list, metric, reference experiment, threshold or map height.
 
