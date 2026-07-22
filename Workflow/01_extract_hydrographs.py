@@ -112,7 +112,7 @@ DEFAULT_GRIB_ROOT = Path(f"/perm/{os.environ['USER']}/flood_cases/grib")
 DEFAULT_DASHBOARD_ROOT = Path("dashboard_data")
 
 DEFAULT_STATION_FILE = Path(
-    f"/perm/pad/flood_cases/Stations/allstations_V1_2.csv"
+    f"/perm/pad/flood_cases/Stations/allstations_v1.3.csv"
 )
 
 DEFAULT_OBS_FILE = Path(
@@ -121,6 +121,7 @@ DEFAULT_OBS_FILE = Path(
 
 # 235270 = river discharge
 DISCHARGE_PARAM = 235270
+DEFAULT_DISCHARGE_SHORTNAMES = ["dis24", "avg_dis"]
 
 # Station CSV columns.
 station_id_col = "Id"
@@ -199,6 +200,26 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--grib-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional explicit GRIB directory. If provided, this overrides "
+            "--grib-root/expver/date layout."
+        ),
+    )
+
+    parser.add_argument(
+        "--grib-file-pattern",
+        default=None,
+        help=(
+            "Optional GRIB filename glob pattern, for example: "
+            "'glofas_v5.0_ecmf-era5_*.grib'. Default uses "
+            "Globe_river_discharge_<expver>_*.grb."
+        ),
+    )
+
+    parser.add_argument(
         "--dashboard-root",
         type=Path,
         default=DEFAULT_DASHBOARD_ROOT,
@@ -210,6 +231,17 @@ def parse_args():
         type=Path,
         default=DEFAULT_STATION_FILE,
         help="Station metadata CSV file.",
+    )
+
+    parser.add_argument(
+        "--model-grid-source",
+        default="auto",
+        choices=["auto", "cama", "glofas", "efas"],
+        help=(
+            "Which station colocation columns to use for model extraction. "
+            "auto: glofas* expver -> Gfaslon/Gfaslat/Gfasarea, "
+            "efas* expver -> Efaslon/Efaslat/Efasarea, otherwise CaMa columns."
+        ),
     )
 
     parser.add_argument(
@@ -259,6 +291,26 @@ def parse_args():
         ),
     )
 
+    parser.add_argument(
+        "--discharge-param-id",
+        type=int,
+        default=DISCHARGE_PARAM,
+        help=(
+            "GRIB paramId used to identify discharge messages. "
+            "Default: 235270."
+        ),
+    )
+
+    parser.add_argument(
+        "--discharge-shortnames",
+        nargs="+",
+        default=DEFAULT_DISCHARGE_SHORTNAMES,
+        help=(
+            "Additional GRIB shortName values accepted as discharge messages, "
+            "for example: dis24 avg_dis."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -286,6 +338,50 @@ def cama_columns(resolution):
         "row": f"{prefix}row",
         "col": f"{prefix}col",
     }
+
+
+def gfas_columns():
+    return {
+        "lon": "Gfaslon",
+        "lat": "Gfaslat",
+        "area": "Gfasarea",
+        "row": None,
+        "col": None,
+    }
+
+
+def efas_columns():
+    return {
+        "lon": "Efaslon",
+        "lat": "Efaslat",
+        "area": "Efasarea",
+        "row": None,
+        "col": None,
+    }
+
+
+def select_model_columns(expver, resolution, model_grid_source):
+    source = str(model_grid_source).lower().strip()
+
+    if source == "auto":
+        if str(expver).lower().startswith("glofas"):
+            source = "glofas"
+        elif str(expver).lower().startswith("efas"):
+            source = "efas"
+        else:
+            source = "cama"
+
+    if source == "cama":
+        return source, cama_columns(resolution)
+    if source == "glofas":
+        return source, gfas_columns()
+    if source == "efas":
+        return source, efas_columns()
+
+    raise ValueError(
+        f"Unsupported --model-grid-source={model_grid_source!r}. "
+        "Use one of: auto, cama, glofas, efas"
+    )
 
 
 def safe_json_value(v):
@@ -393,6 +489,37 @@ def valid_time_from_grib(gid):
         )
 
         return t0 + pd.to_timedelta(step, unit="h")
+
+
+def is_discharge_message(gid, discharge_param_id, discharge_shortnames):
+    """
+    Return True when a GRIB message is considered river discharge.
+
+    A message is accepted when either:
+      - paramId equals discharge_param_id, or
+      - shortName is in discharge_shortnames
+    """
+    short_names = set()
+    if discharge_shortnames is not None:
+        short_names = {str(x).strip() for x in discharge_shortnames if str(x).strip()}
+
+    try:
+        param_id = int(codes_get(gid, "paramId"))
+    except Exception:
+        param_id = None
+
+    try:
+        short_name = str(codes_get(gid, "shortName")).strip()
+    except Exception:
+        short_name = ""
+
+    if discharge_param_id is not None and param_id == int(discharge_param_id):
+        return True
+
+    if short_name and short_name in short_names:
+        return True
+
+    return False
 
 
 def station_area_km2(row):
@@ -902,6 +1029,8 @@ def collect_grib_times(
     date_end,
     clip_to_date_range,
     valid_time_shift_hours,
+    discharge_param_id,
+    discharge_shortnames,
 ):
     """
     First GRIB pass: collect shifted valid times for river discharge messages.
@@ -927,9 +1056,11 @@ def collect_grib_times(
                     break
 
                 try:
-                    param_id = int(codes_get(gid, "paramId"))
-
-                    if param_id != DISCHARGE_PARAM:
+                    if not is_discharge_message(
+                        gid,
+                        discharge_param_id=discharge_param_id,
+                        discharge_shortnames=discharge_shortnames,
+                    ):
                         continue
 
                     vt_raw = valid_time_from_grib(gid)
@@ -952,7 +1083,11 @@ def collect_grib_times(
                     codes_release(gid)
 
     if len(times) == 0:
-        raise RuntimeError(f"No messages found for paramId={DISCHARGE_PARAM}")
+        raise RuntimeError(
+            "No discharge messages found in provided GRIB files. "
+            f"Selection used: paramId={discharge_param_id}, "
+            f"shortNames={list(discharge_shortnames or [])}"
+        )
 
     return times, keep_flags
 
@@ -964,6 +1099,8 @@ def extract_model_at_stations(
     target_lons,
     target_lats,
     keep_flags,
+    discharge_param_id,
+    discharge_shortnames,
 ):
     """
     Second GRIB pass: extract model river discharge at station model locations.
@@ -992,9 +1129,11 @@ def extract_model_at_stations(
                     break
 
                 try:
-                    param_id = int(codes_get(gid, "paramId"))
-
-                    if param_id != DISCHARGE_PARAM:
+                    if not is_discharge_message(
+                        gid,
+                        discharge_param_id=discharge_param_id,
+                        discharge_shortnames=discharge_shortnames,
+                    ):
                         continue
 
                     if it_all >= len(keep_flags):
@@ -1116,7 +1255,11 @@ def main():
 
     date_label = f"{safe_date_label(date_start)}_{safe_date_label(date_end)}"
 
-    model_cols = cama_columns(args.resolution)
+    model_source, model_cols = select_model_columns(
+        expver=expver,
+        resolution=args.resolution,
+        model_grid_source=args.model_grid_source,
+    )
 
     model_lon_col = model_cols["lon"]
     model_lat_col = model_cols["lat"]
@@ -1127,11 +1270,13 @@ def main():
     # --------------------------------------------------------
     # GRIB files
     # --------------------------------------------------------
-    grib_dir = args.grib_root / expver / date_label
+    grib_dir = args.grib_dir if args.grib_dir is not None else (args.grib_root / expver / date_label)
+    if args.grib_file_pattern:
+        grib_pattern = args.grib_file_pattern
+    else:
+        grib_pattern = f"Globe_river_discharge_{expver}_*.grb"
 
-    grib_files = sorted(
-        grib_dir.glob(f"Globe_river_discharge_{expver}_*.grb")
-    )
+    grib_files = sorted(grib_dir.glob(grib_pattern))
 
     if args.max_files is not None:
         grib_files = grib_files[: args.max_files]
@@ -1139,7 +1284,7 @@ def main():
     if len(grib_files) == 0:
         raise RuntimeError(
             f"No GRIB files found in {grib_dir} "
-            f"with pattern Globe_river_discharge_{expver}_*.grb"
+            f"with pattern {grib_pattern}"
         )
 
     # --------------------------------------------------------
@@ -1162,10 +1307,14 @@ def main():
     print(f"Experiment             : {expver}")
     print(f"Date range             : {date_start:%Y-%m-%d} to {date_end:%Y-%m-%d}")
     print(f"CaMa resolution        : {args.resolution} arcmin")
+    print(f"Model colocation source: {model_source}")
     print(f"Model lon/lat          : {model_lon_col}, {model_lat_col}")
     print(f"Model area             : {model_area_col}")
     print(f"GRIB directory         : {grib_dir}")
+    print(f"GRIB file pattern      : {grib_pattern}")
     print(f"GRIB files             : {len(grib_files)}")
+    print(f"Discharge paramId      : {args.discharge_param_id}")
+    print(f"Discharge shortNames   : {', '.join(args.discharge_shortnames)}")
     print(f"Station CSV            : {args.station_file}")
     print(f"Observation file       : {args.obs_file}")
     print(f"Output directory       : {outdir}")
@@ -1216,6 +1365,12 @@ def main():
         model_lat_col,
         model_area_col,
     ]
+
+    if model_row_col is not None:
+        required_station_cols.append(model_row_col)
+
+    if model_col_col is not None:
+        required_station_cols.append(model_col_col)
 
     missing_cols = [
         c for c in required_station_cols
@@ -1291,6 +1446,8 @@ def main():
         date_end=date_end,
         clip_to_date_range=args.clip_to_date_range,
         valid_time_shift_hours=args.valid_time_shift_hours,
+        discharge_param_id=args.discharge_param_id,
+        discharge_shortnames=args.discharge_shortnames,
     )
 
     nt = len(times)
@@ -1321,6 +1478,8 @@ def main():
         target_lons=target_lons,
         target_lats=target_lats,
         keep_flags=keep_flags,
+        discharge_param_id=args.discharge_param_id,
+        discharge_shortnames=args.discharge_shortnames,
     )
 
     if model_q.shape[1] != len(time_labels):
