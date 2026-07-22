@@ -75,16 +75,16 @@ VALID_COLOUR_MODES = [
 
 # Stable palette used both on the map and in hydrograph curves.
 EXPERIMENT_COLOURS = [
-    "rgb(0,100,0)",        # darkgreen
-    "rgb(65,105,225)",     # royalblue
-    "rgb(255,140,0)",      # darkorange
-    "rgb(128,0,128)",      # purple
-    "rgb(0,128,128)",      # teal
-    "rgb(165,42,42)",      # brown
-    "rgb(255,20,147)",     # deeppink
-    "rgb(128,128,0)",      # olive
-    "rgb(0,0,128)",        # navy
-    "rgb(220,20,60)",      # crimson
+  "rgb(0,114,178)",      # blue
+  "rgb(230,159,0)",      # orange
+  "rgb(0,158,115)",      # bluish green
+  "rgb(204,121,167)",    # reddish purple
+  "rgb(86,180,233)",     # sky blue
+  "rgb(213,94,0)",       # vermillion
+  "rgb(240,228,66)",     # yellow
+  "rgb(0,0,0)",          # black
+  "rgb(127,127,127)",    # grey
+  "rgb(51,34,136)",      # deep indigo
 ]
 
 
@@ -190,6 +190,16 @@ def parse_args():
         "--output-html",
         type=Path,
         default=None,
+    )
+
+    parser.add_argument(
+      "--output-dir",
+      type=Path,
+      default=Path("."),
+      help=(
+        "Directory where output HTML will be written when --output-html is not "
+        "explicitly provided. Default: current directory."
+      ),
     )
 
     parser.add_argument(
@@ -842,7 +852,7 @@ def build_map(records, args):
 # ------------------------------------------------------------
 def build_html(records, fig, args, output_html):
     map_div = fig.to_html(
-        include_plotlyjs=True,
+    include_plotlyjs=False,
         full_html=False,
         div_id="map",
         default_width="100%",
@@ -855,10 +865,10 @@ def build_html(records, fig, args, output_html):
         },
     )
 
-    records_json = json.dumps(records, ensure_ascii=False, separators=(",", ":"))
-    expvers_json = json.dumps(args.expver, ensure_ascii=False, separators=(",", ":"))
-    zoom_presets_json = json.dumps(ZOOM_PRESETS, ensure_ascii=False, separators=(",", ":"))
-    palette_json = json.dumps(experiment_palette(args.expver), ensure_ascii=False, separators=(",", ":"))
+    records_json = json.dumps(records, ensure_ascii=True, separators=(",", ":"))
+    expvers_json = json.dumps(args.expver, ensure_ascii=True, separators=(",", ":"))
+    zoom_presets_json = json.dumps(ZOOM_PRESETS, ensure_ascii=True, separators=(",", ":"))
+    palette_json = json.dumps(experiment_palette(args.expver), ensure_ascii=True, separators=(",", ":"))
 
     data_root_js = str(args.data_root).replace("\\", "/")
 
@@ -867,6 +877,7 @@ def build_html(records, fig, args, output_html):
 <head>
 <meta charset="utf-8">
 <title>Global station hydrograph dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-3.5.0.min.js"></script>
 <style>
 html, body {
   margin: 0;
@@ -884,6 +895,7 @@ html, body {
 #top-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid #ccc;
@@ -898,8 +910,9 @@ html, body {
 }
 
 #zoom-select {
-  min-width: 280px;
+  min-width: 200px;
   max-width: 460px;
+  width: min(460px, 48vw);
   font-size: 12px;
   padding: 3px 5px;
 }
@@ -915,6 +928,31 @@ html, body {
   color: #555;
   font-size: 11px;
   margin-left: 6px;
+}
+
+#station-selector-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#station-search-input {
+  min-width: 240px;
+  max-width: 560px;
+  width: min(560px, 56vw);
+  font-size: 12px;
+  padding: 3px 5px;
+}
+
+#station-search-go {
+  font-size: 12px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+#transport-warning {
+  display: none;
+  margin: 6px 10px;
 }
 
 #map-wrap {
@@ -1051,6 +1089,38 @@ th, td {
     grid-template-columns: minmax(0, 1fr) 430px;
   }
 }
+
+@media (max-width: 900px) {
+  #map-wrap {
+    min-height: 320px;
+  }
+
+  #bottom {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(240px, auto);
+  }
+
+  #info {
+    border-left: none;
+    border-top: 1px solid #ccc;
+    max-width: 100%;
+  }
+
+  #zoom-status {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  #station-selector-wrap {
+    width: 100%;
+  }
+
+  #station-search-input {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+}
 </style>
 </head>
 <body>
@@ -1061,8 +1131,18 @@ th, td {
     <select id="zoom-select"></select>
     <button id="zoom-apply" type="button">Go</button>
     <button id="zoom-global" type="button">Global</button>
+
+    <div class="toolbar-title">Station selector</div>
+    <div id="station-selector-wrap">
+      <input id="station-search-input" list="station-search-list" type="text" placeholder="Type station Id or river" autocomplete="off">
+      <datalist id="station-search-list"></datalist>
+      <button id="station-search-go" type="button">Load</button>
+    </div>
+
     <span id="zoom-status"></span>
   </div>
+
+  <div id="transport-warning" class="warning"></div>
 
   <div id="map-wrap">
     __MAP_DIV__
@@ -1135,6 +1215,27 @@ let currentVisibleExtent = {
 let ecdfDebounceTimer = null;
 let ecdfInitialised = false;
 let currentStationIndex = null;
+let currentStationRequestId = 0;
+let activeStationAbortController = null;
+let resizeDebounceTimer = null;
+let selectedStationTraceIndices = [];
+const stationPayloadCache = new Map();
+const STATION_FETCH_TIMEOUT_MS = 12000;
+const STATION_SUGGESTION_LIMIT = 50;
+let stationSearchMatches = [];
+
+function initEnvironmentWarning() {
+  const warning = document.getElementById("transport-warning");
+  if (!warning) return;
+
+  if (window.location.protocol === "file:") {
+    warning.style.display = "inline-block";
+    warning.innerHTML =
+      "This dashboard is opened with file://. Some browsers block local JSON fetch calls. " +
+      "Serve this folder with a local web server (for example: <span class='code'>python3 -m http.server</span>) " +
+      "or upload it to Sites.";
+  }
+}
 
 function sanitizeUserPath(pathValue) {
   if (pathValue === null || pathValue === undefined) return "";
@@ -1315,9 +1416,12 @@ function deriveInitialExtentFromMap() {
   const centerLat = geo.center && geo.center.lat !== undefined ? geo.center.lat : DEFAULT_CENTER.lat;
   const scale = geo.projection && geo.projection.scale !== undefined ? Number(geo.projection.scale) : 1.0;
 
+  const normalizedCenterLon = normalizeLongitude(centerLon);
+  const clampedCenterLat = clampLatitude(centerLat);
+
   currentGeoCenter = {
-    lon: normalizeLongitude(centerLon) ?? DEFAULT_CENTER.lon,
-    lat: clampLatitude(centerLat) ?? DEFAULT_CENTER.lat
+    lon: normalizedCenterLon !== null ? normalizedCenterLon : DEFAULT_CENTER.lon,
+    lat: clampedCenterLat !== null ? clampedCenterLat : DEFAULT_CENTER.lat
   };
   currentGeoScale = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
 
@@ -1744,6 +1848,134 @@ function zoomToPreset(preset) {
   scheduleEcdfUpdate();
 }
 
+function zoomToStationBox(station, halfSpanDegrees = 5) {
+  if (!station) return;
+
+  const lat = clampLatitude(station.lat);
+  const lon = normalizeLongitude(station.lon);
+  if (lat === null || lon === null) return;
+
+  const span = Number(halfSpanDegrees);
+  if (!Number.isFinite(span) || span <= 0) return;
+
+  const lat0 = clampLatitude(lat - span);
+  const lat1 = clampLatitude(lat + span);
+  const lon0 = Math.max(-180, lon - span);
+  const lon1 = Math.min(180, lon + span);
+
+  const update = {
+    "geo.center.lon": lon,
+    "geo.center.lat": lat,
+    "geo.lonaxis.autorange": false,
+    "geo.lataxis.autorange": false,
+    "geo.lonaxis.range": [lon0, lon1],
+    "geo.lataxis.range": [lat0, lat1]
+  };
+
+  Plotly.relayout("map", update);
+
+  const status = document.getElementById("zoom-status");
+  if (status) {
+    status.textContent =
+      "Station " + stationSearchId(station, 0) +
+      "  lon [" + lon0.toFixed(2) + ", " + lon1.toFixed(2) + "]" +
+      " lat [" + lat0.toFixed(2) + ", " + lat1.toFixed(2) + "]";
+  }
+
+  resizePlots();
+  scheduleEcdfUpdate();
+}
+
+function updateSelectedStationMarker(station) {
+  if (!mapDiv || !window.Plotly || !station) return;
+
+  const lat = Number(station.lat);
+  const lon = normalizeLongitude(station.lon);
+  if (!Number.isFinite(lat) || lon === null) return;
+
+  const targetTraces = [
+    {
+      type: "scattergeo",
+      lon: [lon],
+      lat: [lat],
+      mode: "markers",
+      hoverinfo: "skip",
+      showlegend: false,
+      marker: {
+        symbol: "circle-open",
+        size: 22,
+        color: "rgb(255,0,0)",
+        line: {color: "rgb(255,0,0)", width: 3}
+      }
+    },
+    {
+      type: "scattergeo",
+      lon: [lon],
+      lat: [lat],
+      mode: "markers",
+      hoverinfo: "skip",
+      showlegend: false,
+      marker: {
+        symbol: "circle-open",
+        size: 14,
+        color: "rgb(255,0,0)",
+        line: {color: "rgb(255,0,0)", width: 3}
+      }
+    },
+    {
+      type: "scattergeo",
+      lon: [lon],
+      lat: [lat],
+      mode: "markers",
+      hoverinfo: "skip",
+      showlegend: false,
+      marker: {
+        symbol: "cross-open",
+        size: 28,
+        color: "rgb(255,0,0)",
+        line: {color: "rgb(255,0,0)", width: 3}
+      }
+    }
+  ];
+
+  const haveValidIndices =
+    Array.isArray(mapDiv.data) &&
+    selectedStationTraceIndices.length === targetTraces.length &&
+    selectedStationTraceIndices.every(function(idx) {
+      return Number.isInteger(idx) && idx >= 0 && idx < mapDiv.data.length;
+    });
+
+  if (!haveValidIndices) {
+    Plotly.addTraces("map", targetTraces)
+      .then(function() {
+        if (Array.isArray(mapDiv.data) && mapDiv.data.length >= targetTraces.length) {
+          const end = mapDiv.data.length - 1;
+          const start = end - targetTraces.length + 1;
+          selectedStationTraceIndices = targetTraces.map(function(_, i) {
+            return start + i;
+          });
+        }
+      })
+      .catch(function(err) {
+        console.warn("Could not add selected-station marker", err);
+      });
+    return;
+  }
+
+  for (let j = 0; j < selectedStationTraceIndices.length; j++) {
+    const idx = selectedStationTraceIndices[j];
+    const trace = targetTraces[j];
+    Plotly.restyle(
+      "map",
+      {
+        lon: [trace.lon],
+        lat: [trace.lat]
+      },
+      [idx]
+    );
+  }
+}
+
 function resetGlobalZoom() {
   const globalPreset = ZOOM_PRESETS.find(p => p.name === "Global");
   if (globalPreset) zoomToPreset(globalPreset);
@@ -1801,6 +2033,148 @@ function buildZoomSelect() {
       resetGlobalZoom();
     });
   }
+}
+
+function stationSearchLabel(station, index) {
+  const sid = station.source_station_id !== undefined && station.source_station_id !== null
+    ? String(station.source_station_id)
+    : (station.station_id !== undefined && station.station_id !== null
+      ? String(station.station_id)
+      : String(index));
+
+  const river = String(station.river || "").trim();
+  const name = String(station.name || "").trim();
+
+  return sid + " | " + river + " | " + name;
+}
+
+function stationSearchId(station, index) {
+  if (station.source_station_id !== undefined && station.source_station_id !== null) {
+    return String(station.source_station_id);
+  }
+  if (station.station_id !== undefined && station.station_id !== null) {
+    return String(station.station_id);
+  }
+  return String(index);
+}
+
+function buildStationSelector() {
+  const input = document.getElementById("station-search-input");
+  const list = document.getElementById("station-search-list");
+  const button = document.getElementById("station-search-go");
+
+  if (!input || !list || !button) return;
+
+  function computeStationMatches(term) {
+    const scored = [];
+
+    for (let i = 0; i < STATIONS.length; i++) {
+      const station = STATIONS[i];
+      const sid = stationSearchId(station, i).toLowerCase();
+      const river = String(station.river || "").toLowerCase();
+      const name = String(station.name || "").toLowerCase();
+
+      let score = null;
+      if (sid === term) {
+        score = 0;
+      } else if (sid.indexOf(term) >= 0) {
+        score = 1;
+      } else if (river.indexOf(term) >= 0) {
+        score = 2;
+      } else if (name.indexOf(term) >= 0) {
+        score = 3;
+      }
+
+      if (score !== null) {
+        scored.push({
+          index: i,
+          score: score,
+          label: stationSearchLabel(station, i)
+        });
+      }
+    }
+
+    scored.sort(function(a, b) {
+      if (a.score !== b.score) return a.score - b.score;
+      return a.label.localeCompare(b.label);
+    });
+
+    return scored.slice(0, STATION_SUGGESTION_LIMIT);
+  }
+
+  function updateSuggestions() {
+    const term = String(input.value || "").trim().toLowerCase();
+    stationSearchMatches = [];
+    list.innerHTML = "";
+
+    if (!term) return;
+
+    stationSearchMatches = computeStationMatches(term);
+
+    for (const row of stationSearchMatches) {
+      const option = document.createElement("option");
+      option.value = row.label;
+      list.appendChild(option);
+    }
+  }
+
+  function loadFromSearchInput() {
+    const raw = String(input.value || "").trim();
+    const term = raw.toLowerCase();
+    if (!term) return;
+
+    // Recompute from current input so the Load button is not dependent on stale suggestions.
+    const matches = computeStationMatches(term);
+
+    let match = null;
+
+    for (const row of matches) {
+      const station = STATIONS[row.index];
+      const sid = stationSearchId(station, row.index).toLowerCase();
+      const label = row.label.toLowerCase();
+
+      if (sid === term || label === term) {
+        match = row;
+        break;
+      }
+    }
+
+    // Also support selecting just the ID part of a datalist label: "<id> | ...".
+    if (!match) {
+      const idOnly = term.split("|")[0].trim();
+      for (let i = 0; i < STATIONS.length; i++) {
+        const sid = stationSearchId(STATIONS[i], i).toLowerCase();
+        if (sid === idOnly) {
+          match = {index: i, label: stationSearchLabel(STATIONS[i], i)};
+          break;
+        }
+      }
+    }
+
+    if (!match && matches.length > 0) {
+      match = matches[0];
+    }
+
+    if (match) {
+      input.value = match.label;
+      stationSearchMatches = matches;
+      loadAndPlotStation(match.index, {zoomOnLoad: true});
+    }
+  }
+
+  input.addEventListener("input", updateSuggestions);
+  input.addEventListener("change", loadFromSearchInput);
+  input.addEventListener("keydown", function(event) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      loadFromSearchInput();
+    }
+  });
+
+  button.addEventListener("click", function(event) {
+    event.preventDefault();
+    loadFromSearchInput();
+  });
 }
 
 function sortedRuns(station) {
@@ -1934,17 +2308,63 @@ function stationInfo(station, payloadsByExpver) {
   return s;
 }
 
-async function fetchStationPayload(expver, run) {
+function combineAbortSignals(primarySignal, timeoutSignal) {
+  if (!primarySignal) return timeoutSignal;
+  if (!timeoutSignal) return primarySignal;
+
+  const controller = new AbortController();
+
+  const onAbort = function() {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+
+  if (primarySignal.aborted || timeoutSignal.aborted) {
+    controller.abort();
+  } else {
+    primarySignal.addEventListener("abort", onAbort, {once: true});
+    timeoutSignal.addEventListener("abort", onAbort, {once: true});
+  }
+
+  return controller.signal;
+}
+
+async function fetchStationPayload(expver, run, signal) {
   if (!run || !run.json_path) return null;
 
+  const cacheKey = String(run.json_path);
+  if (stationPayloadCache.has(cacheKey)) {
+    return stationPayloadCache.get(cacheKey);
+  }
+
   const url = DATA_ROOT + "/" + run.json_path;
-  const response = await fetch(url);
+  const timeoutController = new AbortController();
+  const timeoutId = window.setTimeout(function() {
+    timeoutController.abort();
+  }, STATION_FETCH_TIMEOUT_MS);
+
+  const requestSignal = combineAbortSignals(signal, timeoutController.signal);
+
+  let response;
+  try {
+    response = await fetch(url, {signal: requestSignal});
+  } catch (err) {
+    if (timeoutController.signal.aborted) {
+      throw new Error("Timed out loading " + url);
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     throw new Error("Could not load " + url);
   }
 
-  return await response.json();
+  const payload = await response.json();
+  stationPayloadCache.set(cacheKey, payload);
+  return payload;
 }
 
 function chooseObsPayload(payloadsByExpver, expvers = EXPVERS) {
@@ -1955,7 +2375,41 @@ function chooseObsPayload(payloadsByExpver, expvers = EXPVERS) {
   return null;
 }
 
-async function loadAndPlotStation(i) {
+function normaliseSeries(timeValues, dischargeValues) {
+  if (!Array.isArray(timeValues) || !Array.isArray(dischargeValues)) {
+    return {time: [], values: []};
+  }
+
+  // Some payloads can contain repeated cycles of timestamps; keep the last
+  // value per timestamp and then sort chronologically for stable plotting.
+  const byTimestamp = new Map();
+
+  const n = Math.min(timeValues.length, dischargeValues.length);
+  for (let i = 0; i < n; i++) {
+    const ts = String(timeValues[i]);
+    const value = Number(dischargeValues[i]);
+
+    if (!Number.isFinite(value)) continue;
+    byTimestamp.set(ts, value);
+  }
+
+  const sortedTime = Array.from(byTimestamp.keys()).sort();
+  const sortedValues = sortedTime.map(ts => byTimestamp.get(ts));
+
+  return {time: sortedTime, values: sortedValues};
+}
+
+async function loadAndPlotStation(i, options = {}) {
+  currentStationRequestId += 1;
+  const requestId = currentStationRequestId;
+
+  if (activeStationAbortController) {
+    activeStationAbortController.abort();
+  }
+
+  const abortController = new AbortController();
+  activeStationAbortController = abortController;
+
   currentStationIndex = i;
 
   const station = STATIONS[i];
@@ -1965,26 +2419,50 @@ async function loadAndPlotStation(i) {
     return;
   }
 
-  document.getElementById("hydrograph").innerHTML =
-    "<p style='padding:12px;'>Loading " + esc(station.name) + "...</p>";
+  updateSelectedStationMarker(station);
+
+  if (options.zoomOnLoad) {
+    zoomToStationBox(station, 5);
+  }
+
+  const hydroDiv = document.getElementById("hydrograph");
+  const hadExistingPlot = !!(hydroDiv && hydroDiv.data && hydroDiv.data.length > 0);
+
+  if (!hadExistingPlot) {
+    hydroDiv.innerHTML =
+      "<p style='padding:12px;'>Loading " + esc(station.name) + "...</p>";
+  }
 
   const payloadsByExpver = {};
   const errors = [];
 
-  for (const expver of EXPVERS) {
+  const fetchResults = await Promise.all(EXPVERS.map(async function(expver) {
     const run = station.runs[expver];
 
     if (!run) {
-      payloadsByExpver[expver] = null;
-      continue;
+      return {expver: expver, payload: null, error: null};
     }
 
     try {
-      payloadsByExpver[expver] = await fetchStationPayload(expver, run);
+      const payload = await fetchStationPayload(expver, run, abortController.signal);
+      return {expver: expver, payload: payload, error: null};
     } catch (err) {
-      console.error(err);
-      errors.push(String(err));
-      payloadsByExpver[expver] = null;
+      if (err && err.name === "AbortError") {
+        return {expver: expver, payload: null, error: null};
+      }
+      return {expver: expver, payload: null, error: err};
+    }
+  }));
+
+  if (requestId !== currentStationRequestId) {
+    return;
+  }
+
+  for (const item of fetchResults) {
+    payloadsByExpver[item.expver] = item.payload;
+    if (item.error) {
+      console.error(item.error);
+      errors.push(String(item.error));
     }
   }
 
@@ -1996,10 +2474,12 @@ async function loadAndPlotStation(i) {
     if (!payload) continue;
 
     const run = station.runs[expver];
+    const series = normaliseSeries(payload.time, payload.model_discharge);
+    if (series.time.length === 0) continue;
 
     traces.push({
-      x: payload.time,
-      y: payload.model_discharge,
+      x: series.time,
+      y: series.values,
       type: "scatter",
       mode: "lines",
       name: "Model " + expver,
@@ -2021,9 +2501,10 @@ async function loadAndPlotStation(i) {
     : null;
 
   if (obs) {
+    const obsSeries = normaliseSeries(obs.time, obs.values);
     traces.push({
-      x: obs.time,
-      y: obs.values,
+      x: obsSeries.time,
+      y: obsSeries.values,
       type: "scatter",
       mode: "lines+markers",
       name: "Observed streamflow",
@@ -2036,48 +2517,59 @@ async function loadAndPlotStation(i) {
 
   if (traces.length === 0) {
     if (activeExpvers.length === 0) {
-      document.getElementById("hydrograph").innerHTML =
+      hydroDiv.innerHTML =
         "<p style='padding:12px;color:#444;'>Select at least one experiment to draw hydrographs.</p>";
     } else {
-      document.getElementById("hydrograph").innerHTML =
+      hydroDiv.innerHTML =
         "<p style='padding:12px;color:red;'>No hydrograph could be loaded.</p>";
     }
   } else {
-    Plotly.newPlot(
-      "hydrograph",
-      traces,
-      {
-        title: {
-          text: "Hydrograph comparison: " + station.name,
-          x: 0.02,
-          xanchor: "left",
-          y: 0.96,
-          yanchor: "top"
-        },
-        margin: {l: 78, r: 35, t: 70, b: 82},
-        xaxis: {
-          title: {text: "Valid time", standoff: 10},
-          type: "date",
-          automargin: true
-        },
-        yaxis: {
-          title: {text: "River discharge, m³/s", standoff: 14},
-          rangemode: "tozero",
-          automargin: true
-        },
-        legend: {
-          orientation: "h",
-          x: 0,
-          y: -0.24,
-          yanchor: "top"
-        }
+    // Remove stale loading paragraph before drawing updated traces.
+    const layout = {
+      title: {
+        text: "Hydrograph comparison: " + station.name,
+        x: 0.02,
+        xanchor: "left",
+        y: 0.96,
+        yanchor: "top"
       },
-      {
-        responsive: true,
-        displaylogo: false,
-        modeBarButtonsToRemove: ["select2d", "lasso2d"]
+      margin: {l: 78, r: 35, t: 70, b: 82},
+      xaxis: {
+        title: {text: "Valid time", standoff: 10},
+        type: "date",
+        automargin: true
+      },
+      yaxis: {
+        title: {text: "River discharge, m³/s", standoff: 14},
+        rangemode: "tozero",
+        automargin: true
+      },
+      legend: {
+        orientation: "h",
+        x: 0,
+        y: -0.24,
+        yanchor: "top"
       }
-    );
+    };
+
+    const config = {
+      responsive: true,
+      displaylogo: false,
+      modeBarButtonsToRemove: ["select2d", "lasso2d"]
+    };
+
+    try {
+      if (!hadExistingPlot) {
+        hydroDiv.innerHTML = "";
+        Plotly.newPlot("hydrograph", traces, layout, config);
+      } else {
+        Plotly.react("hydrograph", traces, layout, config);
+      }
+    } catch (err) {
+      console.warn("Plotly.react failed for hydrograph; retrying with newPlot", err);
+      hydroDiv.innerHTML = "";
+      Plotly.newPlot("hydrograph", traces, layout, config);
+    }
   }
 
   let infoHtml = stationInfo(station, payloadsByExpver);
@@ -2117,17 +2609,30 @@ function resizePlots() {
   }
 }
 
+function scheduleResize() {
+  if (resizeDebounceTimer !== null) {
+    window.clearTimeout(resizeDebounceTimer);
+  }
+
+  resizeDebounceTimer = window.setTimeout(function() {
+    resizeDebounceTimer = null;
+    resizePlots();
+  }, 120);
+}
+
 buildZoomSelect();
+buildStationSelector();
 initEcdfPanel();
+initEnvironmentWarning();
 
 currentVisibleExtent = deriveInitialExtentFromMap();
 scheduleEcdfUpdate();
 
 window.addEventListener("resize", function() {
-  window.setTimeout(resizePlots, 80);
+  scheduleResize();
 });
 
-window.setTimeout(resizePlots, 200);
+window.setTimeout(scheduleResize, 200);
 
 mapDiv.on("plotly_relayout", function(eventData) {
   updateExtentCacheFromRelayout(eventData || {});
@@ -2200,7 +2705,7 @@ def main():
     label = run_label(args.date_start, args.date_end, args.resolution)
 
     if args.output_html is None:
-        output_html = default_output_name(
+      output_html = args.output_dir / default_output_name(
             expvers=args.expver,
             date_start=args.date_start,
             date_end=args.date_end,
@@ -2210,6 +2715,8 @@ def main():
         )
     else:
         output_html = args.output_html
+
+    output_html.parent.mkdir(parents=True, exist_ok=True)
 
     print("")
     print("============================================================")
