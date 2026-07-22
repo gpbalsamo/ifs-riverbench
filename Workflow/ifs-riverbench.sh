@@ -65,8 +65,8 @@ MARS_EXPERIMENTS=(
 # GloFAS experiments from local GRIB files (not retrieved from MARS here)
 GLOFAS_GRIB_DIR="/perm/${USER}/benchmark_cmf_gp4hydro_vs_glofas_discharge_2018_2022"
 GLOFAS_V4_EXPVER="glofas_v4"
-GLOFAS_V4_PATTERN="glofas_*.grib"
 GLOFAS_V5_EXPVER="glofas_v5"
+GLOFAS_V4_PATTERN="glofas_v4.0_ecmf-era5_*.grib"
 GLOFAS_V5_PATTERN="glofas_v5.0_ecmf-era5_*.grib"
 GLOFAS_SHORTNAMES=("dis24" "avg_dis")
 
