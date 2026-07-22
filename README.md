@@ -1,3 +1,5 @@
+![Example benchmark visual](ifs-riverbench.png)
+
 # ifs-riverbench
 
 `ifs-riverbench` helps you compare river discharge experiments against observations and produce interactive HTML dashboards.
@@ -8,48 +10,39 @@ At a high level, you run a pipeline that:
 3. computes benchmark metrics;
 4. builds visual dashboards to compare experiments.
 
-![Example benchmark visual](ifs-riverbench.png)
-
-## Quick Start (non-expert)
+## Quick Start 
 
 If you are new to the workflow, follow these exact steps first.
 
 ### 1) Go to a large permanent directory
 
-Use `$PERM` if available, or any permanent directory of your choice.
+Your `$PERM` directory if available, or set PERM to on any permanent directory of your choice.
 
 ```bash
 cd $PERM
-```
-
-Example if `$PERM` is not set:
-
-```bash
-cd /perm/$USER
 ```
 
 ### 2) Clone the repository
 
 ```bash
 git clone https://github.com/gpbalsamo/ifs-riverbench.git
-cd ifs-riverbench
 ```
 
 ### 3) Move into the workflow directory
 
 ```bash
-cd Workflow
+cd ifs-riverbench/Workflow
 ```
 
 ### 4) Run the full benchmark workflow
 
 ```bash
-bash ifs-riverbench.sh
+./ifs-riverbench.sh
 ```
 
 This creates station data under `dashboard_data/` and HTML dashboards in `site_bundle/`.
 
-### 5) Upload dashboards (optional)
+### 5) Upload dashboards on sites (optional)
 
 ```bash
 export ECMWF_SITES_TOKEN="<set securely outside Git>"
