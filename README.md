@@ -109,8 +109,15 @@ Cama15lon, Cama15lat, Cama15area, ...
 Default path:
 
 ```text
-/perm/pad/flood_cases/Stations/allstations_V1_2.csv
+/perm/pad/flood_cases/Stations/allstations_V1_3.csv
 ```
+
+Typical path:
+
+```text
+/perm/${USER}/flood_cases/Stations/allstations_V1_2.csv
+```
+
 
 ### Observed discharge
 
@@ -122,10 +129,22 @@ Default NetCDF:
 /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
 ```
 
+Typical path:
+
+```text
+/perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
+```
+
 Recommended Zarr:
 
 ```text
 /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+```
+
+Typical path:
+
+```text
+/perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 ```
 
 ## Optional one-time prep
