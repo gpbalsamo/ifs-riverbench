@@ -40,6 +40,23 @@ EXTRACT_MARS_GRIB=True
 EXTRACT_MARS_HYDRO=True
 EXTRACT_GLOFAS_HYDRO=True
 INCLUDE_GLOFAS_IN_DASHBOARD=True
+# Set to False to skip GloFAS v4 entirely: no v4 files are required, no v4
+# hydrograph is extracted, and v4 is excluded from the dashboards. v5 is
+# always included. Overridable from the environment: INCLUDE_GLOFAS_V4=True bash ...
+INCLUDE_GLOFAS_V4=${INCLUDE_GLOFAS_V4:-False}
+
+# MARS extraction output/scratch roots. The script defaults in
+# 00_extract_rivers_mars.py point at /perm/pad (not writable by other users),
+# so we override them to the current user's space. This also matches the GRIB
+# root that 01_extract_hydrographs.py reads from by default
+# (/perm/${USER}/flood_cases/grib).
+MARS_OUT_ROOT="/perm/${USER}/flood_cases/grib"
+MARS_REQ_ROOT="/perm/${USER}/flood_cases/mars_requests"
+MARS_TMPDIR="/perm/${USER}/flood_cases/tmp_mars"
+
+# Station metadata CSV. Overrides the script default in 01_extract_hydrographs.py
+# (/perm/pad/flood_cases/Stations/allstations_v1.3.csv).
+STATION_FILE="/perm/${USER}/flood_cases/Stations/allstations_v1.3.csv"
 
 ARCHIVE_LAYOUT="daily_steps"
 MARS_STEP_TEXT="24"
@@ -80,7 +97,10 @@ METRICS=("kge" "correlation")
 # Build final dashboard experiment list.
 DASHBOARD_EXPERIMENTS=("${MARS_EXPERIMENTS[@]}")
 if [[ ${INCLUDE_GLOFAS_IN_DASHBOARD} == True ]]; then
-  DASHBOARD_EXPERIMENTS+=("${GLOFAS_V4_EXPVER}" "${GLOFAS_V5_EXPVER}")
+  if [[ ${INCLUDE_GLOFAS_V4} == True ]]; then
+    DASHBOARD_EXPERIMENTS+=("${GLOFAS_V4_EXPVER}")
+  fi
+  DASHBOARD_EXPERIMENTS+=("${GLOFAS_V5_EXPVER}")
 fi
 
 # ----------------------------------------------------------------------
@@ -118,10 +138,12 @@ if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]]; then
     exit 1
   fi
 
+  if [[ ${INCLUDE_GLOFAS_V4} == True ]]; then
   if ! compgen -G "${GLOFAS_GRIB_DIR}/${GLOFAS_V4_PATTERN}" > /dev/null; then
     echo "ERROR: No files found for GloFAS v4 pattern:" >&2
     echo "  ${GLOFAS_GRIB_DIR}/${GLOFAS_V4_PATTERN}" >&2
     exit 1
+  fi
   fi
 
   if ! compgen -G "${GLOFAS_GRIB_DIR}/${GLOFAS_V5_PATTERN}" > /dev/null; then
@@ -132,7 +154,12 @@ if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]]; then
 fi
 
 if [[ ${INCLUDE_GLOFAS_IN_DASHBOARD} == True && ${EXTRACT_GLOFAS_HYDRO} == False ]]; then
-  for GLOFAS_EXPVER in "${GLOFAS_V4_EXPVER}" "${GLOFAS_V5_EXPVER}"; do
+  GLOFAS_CATALOG_EXPVERS=()
+  if [[ ${INCLUDE_GLOFAS_V4} == True ]]; then
+    GLOFAS_CATALOG_EXPVERS+=("${GLOFAS_V4_EXPVER}")
+  fi
+  GLOFAS_CATALOG_EXPVERS+=("${GLOFAS_V5_EXPVER}")
+  for GLOFAS_EXPVER in "${GLOFAS_CATALOG_EXPVERS[@]}"; do
     CATALOG_FILE="dashboard_data/${GLOFAS_EXPVER}/${RUN_LABEL}/stations_catalog.json"
     if [[ ! -f "${CATALOG_FILE}" ]]; then
       echo "ERROR: Missing precomputed GloFAS dashboard data: ${CATALOG_FILE}" >&2
@@ -156,7 +183,10 @@ python3 00_extract_rivers_mars.py \
   --date-start "${DATE_START}" \
   --date-end "${DATE_END}" \
   --archive-layout "${ARCHIVE_LAYOUT}" \
-  --step-text "${MARS_STEP_TEXT}"
+  --step-text "${MARS_STEP_TEXT}" \
+  --out-root "${MARS_OUT_ROOT}" \
+  --req-root "${MARS_REQ_ROOT}" \
+  --tmpdir "${MARS_TMPDIR}"
 
 echo "[1/3] MARS extraction complete."
 else
@@ -191,6 +221,7 @@ echo "MARS hydrograph extraction skipped (EXTRACT_MARS_HYDRO=False)."
 fi
 
 if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]] ; then
+  if [[ ${INCLUDE_GLOFAS_V4} == True ]]; then
   echo
   echo "------------------------------------------------------------------"
   echo "Hydrograph extraction (GloFAS v4)"
@@ -206,7 +237,11 @@ if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]] ; then
     --grib-file-pattern "${GLOFAS_V4_PATTERN}" \
     --discharge-shortnames "${GLOFAS_SHORTNAMES[@]}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
+    --station-file "${STATION_FILE}" \
     --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+  else
+  echo "GloFAS v4 hydrograph extraction skipped (INCLUDE_GLOFAS_V4=False)."
+  fi
 
   echo
   echo "------------------------------------------------------------------"
@@ -223,6 +258,7 @@ if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]] ; then
     --grib-file-pattern "${GLOFAS_V5_PATTERN}" \
     --discharge-shortnames "${GLOFAS_SHORTNAMES[@]}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
+    --station-file "${STATION_FILE}" \
     --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 else
   echo "GloFAS hydrograph extraction skipped (EXTRACT_GLOFAS_HYDRO=False)."
