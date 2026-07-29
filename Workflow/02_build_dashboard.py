@@ -56,6 +56,7 @@ import argparse
 import json
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 
 import cartopy.io.shapereader as shpreader
@@ -211,7 +212,7 @@ def parse_args():
     parser.add_argument(
         "--max-river-scalerank",
         type=int,
-        default=5,
+        default=9,
     )
 
     parser.add_argument(
@@ -229,8 +230,32 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--exclude-from-best",
+        nargs="*",
+        default=[],
+        help=(
+            "Experiment(s) to exclude from the 'best' experiment calculation. "
+            "These experiments still appear on the map and in hydrographs, but "
+            "are not considered when determining which experiment is 'best'."
+        ),
+    )
+
+    parser.add_argument(
         "--no-rivers",
         action="store_true",
+    )
+
+    parser.add_argument(
+        "--no-reservoirs",
+        action="store_true",
+        help="Disable reservoir layer on the map.",
+    )
+
+    parser.add_argument(
+        "--min-dor",
+        type=float,
+        default=0.0,
+        help="Minimum DOR (Degree of Regulation) to show a reservoir. Default: 0 (all).",
     )
 
     parser.add_argument(
@@ -331,7 +356,8 @@ def experiment_palette(expvers):
     return palette
 
 
-def merge_catalogues(data_root, expvers, label, metric, control_expver=None):
+def merge_catalogues(data_root, expvers, label, metric, control_expver=None,
+                     exclude_from_best=None):
     merged = {}
     experiment_counts = {}
 
@@ -386,11 +412,16 @@ def merge_catalogues(data_root, expvers, label, metric, control_expver=None):
 
     records = list(merged.values())
 
+    excluded = set(exclude_from_best or [])
+
     for record in records:
         best_value = None
         best_expver = None
 
         for expver in expvers:
+            if expver in excluded:
+                continue
+
             run = record["runs"].get(expver, {})
             value = safe_float(run.get(metric))
 
@@ -475,20 +506,32 @@ def metric_class(metric, value):
     if metric == "kge":
         if value < -0.41:
             return "very_poor"
-        if -0.41 <= value <= 0.0:
+        if value < 0.0:
             return "poor"
-        if 0.0 < value <= 0.5:
-            return "moderate"
-        return "good"
+        if value < 0.2:
+            return "marginal"
+        if value < 0.5:
+            return "fair"
+        if value < 0.7:
+            return "good"
+        if value < 0.8:
+            return "very_good"
+        return "excellent"
 
     if metric == "correlation":
         if value < 0.3:
             return "very_poor"
-        if 0.3 <= value <= 0.5:
+        if value < 0.5:
             return "poor"
-        if 0.5 < value <= 0.7:
-            return "moderate"
-        return "good"
+        if value < 0.7:
+            return "marginal"
+        if value < 0.8:
+            return "fair"
+        if value < 0.9:
+            return "good"
+        if value < 0.95:
+            return "very_good"
+        return "excellent"
 
     raise ValueError(f"Unsupported metric: {metric}")
 
@@ -496,20 +539,26 @@ def metric_class(metric, value):
 def best_metric_class_config(metric):
     if metric == "kge":
         return [
-            {"class": "missing", "label": "No KGE", "color": "lightgrey", "size": 5, "opacity": 0.35},
-            {"class": "very_poor", "label": "Best KGE < -0.41", "color": "red", "size": 7, "opacity": 0.85},
-            {"class": "poor", "label": "-0.41 <= best KGE <= 0", "color": "gold", "size": 7, "opacity": 0.85},
-            {"class": "moderate", "label": "0 < best KGE <= 0.5", "color": "limegreen", "size": 7, "opacity": 0.85},
-            {"class": "good", "label": "Best KGE > 0.5", "color": "darkgreen", "size": 8, "opacity": 0.9},
+            {"class": "missing",   "label": "No KGE\u2032",             "color": "lightgrey",  "size": 7,  "opacity": 0.5},
+            {"class": "very_poor", "label": "KGE\u2032 < \u22120.41",   "color": "#d4d4d4",    "size": 9,  "opacity": 0.85},
+            {"class": "poor",      "label": "\u22120.41 \u2264 KGE\u2032 < 0",  "color": "#f8fbb3", "size": 9,  "opacity": 0.85},
+            {"class": "marginal",  "label": "0 \u2264 KGE\u2032 < 0.2",  "color": "#fac4fa",   "size": 9,  "opacity": 0.85},
+            {"class": "fair",      "label": "0.2 \u2264 KGE\u2032 < 0.5", "color": "#ca12de",  "size": 9,  "opacity": 0.88},
+            {"class": "good",      "label": "0.5 \u2264 KGE\u2032 < 0.7", "color": "#6592fb",  "size": 10, "opacity": 0.88},
+            {"class": "very_good", "label": "0.7 \u2264 KGE\u2032 < 0.8", "color": "#0a0afd",  "size": 10, "opacity": 0.9},
+            {"class": "excellent", "label": "KGE\u2032 \u2265 0.8",       "color": "#0d138e",  "size": 10, "opacity": 0.9},
         ]
 
     if metric == "correlation":
         return [
-            {"class": "missing", "label": "No correlation", "color": "lightgrey", "size": 5, "opacity": 0.35},
-            {"class": "very_poor", "label": "Best correlation < 0.3", "color": "red", "size": 7, "opacity": 0.85},
-            {"class": "poor", "label": "0.3 <= best correlation <= 0.5", "color": "gold", "size": 7, "opacity": 0.85},
-            {"class": "moderate", "label": "0.5 < best correlation <= 0.7", "color": "limegreen", "size": 7, "opacity": 0.85},
-            {"class": "good", "label": "Best correlation > 0.7", "color": "darkgreen", "size": 8, "opacity": 0.9},
+            {"class": "missing",   "label": "No correlation",     "color": "lightgrey",  "size": 7,  "opacity": 0.5},
+            {"class": "very_poor", "label": "r < 0.3",            "color": "#d4d4d4",    "size": 9,  "opacity": 0.85},
+            {"class": "poor",      "label": "0.3 \u2264 r < 0.5", "color": "#f8fbb3",   "size": 9,  "opacity": 0.85},
+            {"class": "marginal",  "label": "0.5 \u2264 r < 0.7", "color": "#fac4fa",   "size": 9,  "opacity": 0.85},
+            {"class": "fair",      "label": "0.7 \u2264 r < 0.8", "color": "#ca12de",   "size": 9,  "opacity": 0.88},
+            {"class": "good",      "label": "0.8 \u2264 r < 0.9", "color": "#6592fb",   "size": 10, "opacity": 0.88},
+            {"class": "very_good", "label": "0.9 \u2264 r < 0.95","color": "#0a0afd",   "size": 10, "opacity": 0.9},
+            {"class": "excellent", "label": "r \u2265 0.95",       "color": "#0d138e",   "size": 10, "opacity": 0.9},
         ]
 
     raise ValueError(f"Unsupported metric: {metric}")
@@ -556,57 +605,174 @@ def difference_class_config(metric, ref_expver, target_expver, threshold):
 # ------------------------------------------------------------
 # Plotly map helpers
 # ------------------------------------------------------------
+MIN_MARKER_SIZE = 5
+MAX_MARKER_SIZE = 20
+
+
+def compute_marker_sizes(records):
+    """Log-scale marker sizes by upstream area, like Cinzia's dashboard."""
+    areas = []
+    for r in records:
+        a = r.get("upstream_area_km2")
+        areas.append(float(a) if a is not None and float(a) > 0 else 1.0)
+    areas = np.array(areas)
+    log_areas = np.log10(areas + 1)
+    vmin, vmax = log_areas.min(), log_areas.max()
+    if vmax == vmin:
+        return np.full(len(records), (MIN_MARKER_SIZE + MAX_MARKER_SIZE) / 2)
+    return MIN_MARKER_SIZE + (log_areas - vmin) * (MAX_MARKER_SIZE - MIN_MARKER_SIZE) / (vmax - vmin)
+
+
+# ── Reservoir layer ───────────────────────────────────────────────
+RESERVOIRS_CSV = Path("/ec/vol/efas/reservoirs/6.0/EFAS_HSIX_reservoirs_parameters.csv")
+
+
+def add_reservoir_layer(fig, min_dor=0.0):
+    """Add reservoir markers (diamonds) from EFAS reservoirs CSV.
+
+    Reservoirs are placed at their river coordinates with size proportional
+    to log(capacity) and colour indicating DOR.
+    """
+    if not RESERVOIRS_CSV.exists():
+        print(f"  Reservoirs CSV not found at {RESERVOIRS_CSV}, skipping.")
+        return
+
+    df = pd.read_csv(RESERVOIRS_CSV)
+
+    # Filter: must have valid coordinates and DOR
+    df = df.dropna(subset=["LAT_RIV", "LONG_RIV", "DOR"])
+    if min_dor > 0:
+        df = df[df["DOR"] >= min_dor]
+
+    if df.empty:
+        print("  No reservoirs to plot.")
+        return
+
+    # Marker size proportional to DOR (Degree of Regulation)
+    dor = df["DOR"].clip(lower=0).values
+    sz_min, sz_max = 4, 18
+    dmax = np.nanpercentile(dor, 98) if len(dor) else 1.0
+    if not np.isfinite(dmax) or dmax <= 0:
+        dmax = 1.0
+    sizes = sz_min + np.clip(dor / dmax, 0, 1) * (sz_max - sz_min)
+
+    # Hover text
+    hover = []
+    for _, row in df.iterrows():
+        h = (
+            f"<b>{row.get('RES_NAME', '?')}</b><br>"
+            f"Dam: {row.get('DAM_NAME', '?')}<br>"
+            f"River: {row.get('RIVER', '?')}<br>"
+            f"Country: {row.get('COUNTRY', '?')}<br>"
+            f"DOR: {row['DOR']:.2f}<br>"
+            f"Capacity: {row.get('CAP_MCM', 0):.0f} MCM<br>"
+            f"Area: {row.get('AREA_SKM', 0):.1f} km²<br>"
+            f"Year: {int(row['YEAR_DAM']) if pd.notna(row.get('YEAR_DAM')) else '?'}"
+        )
+        hover.append(h)
+
+    fig.add_trace(
+        go.Scattermap(
+            lon=df["LONG_RIV"].tolist(),
+            lat=df["LAT_RIV"].tolist(),
+            mode="markers",
+            marker=dict(
+                size=sizes.tolist(),
+                color=df["DOR"].tolist(),
+                colorscale="YlOrRd",
+                cmin=0,
+                cmax=min(df["DOR"].max(), 100),
+                symbol="square",
+                opacity=0.7,
+                colorbar=dict(
+                    title="DOR",
+                    x=0.01,
+                    xanchor="left",
+                    y=0.5,
+                    len=0.4,
+                    thickness=12,
+                    tickfont=dict(size=9),
+                    title_font=dict(size=10),
+                ),
+            ),
+            text=hover,
+            hoverinfo="text",
+            name="Reservoirs (DOR)",
+            visible=False,
+            showlegend=True,
+        )
+    )
+
+    print(f"Added reservoir layer: {len(df):,} reservoirs", flush=True)
+
+
 def add_river_layer(fig, resolution="50m", max_scalerank=6):
+    """Add global rivers + Europe-specific rivers from Natural Earth as Scattermap lines."""
+    from pathlib import Path as _P
+
     shp = shpreader.natural_earth(
         resolution=resolution,
         category="physical",
         name="rivers_lake_centerlines",
     )
 
-    reader = shpreader.BasicReader(shp)
+    shapefiles_to_read = [shp]
+
+    # Also load Europe-specific rivers if available. Path is configurable via
+    # the RIVERBENCH_EUROPE_RIVERS_SHP env var; if unset or missing it is skipped.
+    import os as _os
+    europe_shp = _P(_os.environ.get(
+        "RIVERBENCH_EUROPE_RIVERS_SHP",
+        "cinzia_dashboard/data/natural_earth/ne_10m_rivers_europe.shp",
+    ))
+    if europe_shp.exists():
+        shapefiles_to_read.append(str(europe_shp))
 
     lon_all = []
     lat_all = []
     n_rivers = 0
 
-    for rec in reader.records():
-        scalerank = rec.attributes.get("scalerank", 99)
+    for shp_path in shapefiles_to_read:
+        reader = shpreader.BasicReader(shp_path)
 
-        if scalerank is not None and scalerank > max_scalerank:
-            continue
+        for rec in reader.records():
+            scalerank = rec.attributes.get("scalerank", 99)
 
-        geom = rec.geometry
-        if geom is None:
-            continue
-
-        if geom.geom_type == "LineString":
-            lines = [geom]
-        elif geom.geom_type == "MultiLineString":
-            lines = list(geom.geoms)
-        else:
-            continue
-
-        for line in lines:
-            coords = np.asarray(line.coords)
-            if coords.size == 0:
+            if scalerank is not None and scalerank > max_scalerank:
                 continue
 
-            lon_all.extend(coords[:, 0].tolist())
-            lat_all.extend(coords[:, 1].tolist())
-            lon_all.append(None)
-            lat_all.append(None)
-            n_rivers += 1
+            geom = rec.geometry
+            if geom is None:
+                continue
+
+            if geom.geom_type == "LineString":
+                lines = [geom]
+            elif geom.geom_type == "MultiLineString":
+                lines = list(geom.geoms)
+            else:
+                continue
+
+            for line in lines:
+                coords = np.asarray(line.coords)
+                if coords.size == 0:
+                    continue
+
+                lon_all.extend(coords[:, 0].tolist())
+                lat_all.extend(coords[:, 1].tolist())
+                lon_all.append(None)
+                lat_all.append(None)
+                n_rivers += 1
 
     fig.add_trace(
-        go.Scattergeo(
+        go.Scattermap(
             lon=lon_all,
             lat=lat_all,
             mode="lines",
-            line=dict(color="rgb(60,120,180)", width=0.7),
-            opacity=0.55,
-            name=f"Rivers ({resolution}, rank <= {max_scalerank})",
+            line=dict(color="#4a90e2", width=1.0),
+            opacity=0.5,
+            name=f"Rivers",
             hoverinfo="skip",
-            showlegend=True,
+            showlegend=False,
         )
     )
 
@@ -648,12 +814,18 @@ def hover_text(record, args):
     return text
 
 
-def add_marker_trace(fig, records, indices, name, color, size, opacity, args):
+def add_marker_trace(fig, records, indices, name, color, size, opacity, args,
+                     marker_sizes=None):
     if len(indices) == 0:
         return
 
+    if marker_sizes is not None:
+        sizes = [marker_sizes[i] for i in indices]
+    else:
+        sizes = size
+
     fig.add_trace(
-        go.Scattergeo(
+        go.Scattermap(
             lon=[records[i]["lon"] for i in indices],
             lat=[records[i]["lat"] for i in indices],
             mode="markers",
@@ -661,10 +833,9 @@ def add_marker_trace(fig, records, indices, name, color, size, opacity, args):
             customdata=indices,
             hovertemplate="%{text}<extra></extra>",
             marker=dict(
-                size=size,
+                size=sizes,
                 color=color,
                 opacity=opacity,
-                line=dict(width=0.8, color="black"),
             ),
             name=f"{name} ({len(indices):,})",
         )
@@ -672,6 +843,7 @@ def add_marker_trace(fig, records, indices, name, color, size, opacity, args):
 
 
 def add_best_metric_layers(fig, records, args):
+    marker_sizes = compute_marker_sizes(records)
     for cfg in best_metric_class_config(args.metric):
         indices = [
             i for i, record in enumerate(records)
@@ -687,6 +859,7 @@ def add_best_metric_layers(fig, records, args):
             size=cfg["size"],
             opacity=cfg["opacity"],
             args=args,
+            marker_sizes=marker_sizes,
         )
 
 
@@ -704,6 +877,7 @@ def add_best_experiment_layers(fig, records, args):
     palette = experiment_palette(args.expver)
     threshold = float(args.best_experiment_min_improvement)
     control_expver = args.control_expver
+    marker_sizes = compute_marker_sizes(records)
 
     missing_indices = [
         i for i, record in enumerate(records)
@@ -713,6 +887,7 @@ def add_best_experiment_layers(fig, records, args):
     add_marker_trace(
         fig, records, missing_indices,
         f"No valid {args.metric}", "lightgrey", 5, 0.35, args,
+        marker_sizes=marker_sizes,
     )
 
     no_clear_winner_indices = []
@@ -738,6 +913,7 @@ def add_best_experiment_layers(fig, records, args):
         7,
         0.78,
         args,
+        marker_sizes=marker_sizes,
     )
 
     no_clear_set = set(no_clear_winner_indices)
@@ -751,6 +927,7 @@ def add_best_experiment_layers(fig, records, args):
         add_marker_trace(
             fig, records, indices,
             f"Best and meaningful: {expver}", palette[expver], 8, 0.88, args,
+            marker_sizes=marker_sizes,
         )
 
 def add_difference_layers(fig, records, args):
@@ -759,6 +936,7 @@ def add_difference_layers(fig, records, args):
 
     ref_expver = args.expver[0]
     target_expver = args.expver[1]
+    marker_sizes = compute_marker_sizes(records)
 
     for cfg in difference_class_config(
         args.metric,
@@ -777,6 +955,7 @@ def add_difference_layers(fig, records, args):
         add_marker_trace(
             fig, records, indices,
             cfg["label"], cfg["color"], cfg["size"], cfg["opacity"], args,
+            marker_sizes=marker_sizes,
         )
 
 
@@ -800,6 +979,9 @@ def build_map(records, args):
             max_scalerank=args.max_river_scalerank,
         )
 
+    if not args.no_reservoirs:
+        add_reservoir_layer(fig, min_dor=args.min_dor)
+
     if args.colour_mode == "best_metric":
         add_best_metric_layers(fig, records, args)
     elif args.colour_mode == "best_experiment":
@@ -809,38 +991,26 @@ def build_map(records, args):
     else:
         raise ValueError(f"Unsupported colour mode: {args.colour_mode}")
 
-    fig.update_geos(
-        projection_type=args.projection,
-        showland=True,
-        landcolor="rgb(240,240,240)",
-        showcountries=True,
-        countrycolor="rgb(120,120,120)",
-        showcoastlines=True,
-        coastlinecolor="rgb(80,80,80)",
-        showocean=True,
-        oceancolor="rgb(225,235,245)",
-        lataxis_showgrid=True,
-        lonaxis_showgrid=True,
-    )
-
-    exp_label = ", ".join(args.expver)
-
+    # Use tile-based map (carto-positron) like Cinzia's dashboard
     fig.update_layout(
-        title=(
-            "Global station hydrograph dashboard"
-            f"<br><sup>Experiments: {exp_label}. "
-            f"{colour_title(args)}. "
-            f"Click a station to compare hydrographs.</sup>"
+        map=dict(
+            style="carto-positron",
+            center=dict(lat=52, lon=15),
+            zoom=3.5,
         ),
         autosize=True,
-        margin=dict(l=0, r=0, t=78, b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=True,
         legend=dict(
-            x=0.01,
-            y=0.98,
+            orientation="h",
+            x=0.5,
+            xanchor="center",
+            y=1.0,
+            yanchor="bottom",
             bgcolor="rgba(255,255,255,0.85)",
             bordercolor="rgba(120,120,120,0.6)",
             borderwidth=1,
+            font=dict(size=10),
         ),
     )
 
@@ -850,6 +1020,32 @@ def build_map(records, args):
 # ------------------------------------------------------------
 # HTML generation
 # ------------------------------------------------------------
+# Theme (light/dark) logic lives in the repo-level hooks/ folder and is
+# inlined into every generated dashboard so the single HTML file stays
+# self-contained for ECMWF Sites upload.
+HOOKS_DIR = Path(__file__).resolve().parents[1] / "hooks"
+
+
+def build_theme_head():
+    """Return the <style>/<script> block that adds light/dark theming.
+
+    Reads hooks/theme.css and hooks/theme.js. If either is missing the
+    dashboard is still built, just without the theme toggle.
+    """
+    css_path = HOOKS_DIR / "theme.css"
+    js_path = HOOKS_DIR / "theme.js"
+    parts = []
+    if css_path.is_file():
+        parts.append("<style>\n" + css_path.read_text(encoding="utf-8") + "\n</style>")
+    else:
+        print(f"WARNING: theme CSS not found at {css_path}; theme disabled.", flush=True)
+    if js_path.is_file():
+        parts.append("<script>\n" + js_path.read_text(encoding="utf-8") + "\n</script>")
+    else:
+        print(f"WARNING: theme JS not found at {js_path}; theme disabled.", flush=True)
+    return "\n".join(parts)
+
+
 def build_html(records, fig, args, output_html):
     map_div = fig.to_html(
     include_plotlyjs=False,
@@ -1122,6 +1318,7 @@ th, td {
   }
 }
 </style>
+__THEME_HEAD__
 </head>
 <body>
 <div id="container">
@@ -1130,7 +1327,7 @@ th, td {
     <div class="toolbar-title">Zoom preset</div>
     <select id="zoom-select"></select>
     <button id="zoom-apply" type="button">Go</button>
-    <button id="zoom-global" type="button">Global</button>
+    <button id="zoom-global" type="button">Europe</button>
 
     <div class="toolbar-title">Station selector</div>
     <div id="station-selector-wrap">
@@ -1139,7 +1336,18 @@ th, td {
       <button id="station-search-go" type="button">Load</button>
     </div>
 
+    <div class="toolbar-title">Map colour by</div>
+    <select id="map-exp-select" style="font-size:12px;padding:3px 5px;"></select>
+
+    <button id="toggle-reservoirs" type="button" style="margin-left:12px;font-size:11px;padding:3px 8px;">Reservoirs</button>
+    <button id="toggle-legend" type="button" style="margin-left:4px;font-size:11px;padding:3px 8px;">Legend</button>
+
+    <span class="toolbar-title" title="Forecast lead time for the LSTM (AIFL / AIFL-DA) hydrographs. Each point of a fixed lead comes from a different issue-time run.">LSTM lead time</span>
+    <select id="lead-select" style="font-size:12px;padding:3px 5px;"></select>
+
     <span id="zoom-status"></span>
+
+    <button id="theme-toggle" type="button" title="Toggle light / dark theme">🌙 Dark</button>
   </div>
 
   <div id="transport-warning" class="warning"></div>
@@ -1152,6 +1360,11 @@ th, td {
     <div id="ecdf-toolbar">
       <span class="toolbar-title">Visible-extent empirical CDF</span>
       <span id="ecdf-exp-select"></span>
+      <label class="ecdf-exp-chip">
+        <input id="obs-checkbox" type="checkbox" checked>
+        <span style="color:black;font-weight:bold;">&#9679;</span>
+        <span>Observed</span>
+      </label>
       <label>
         <input id="ecdf-common-checkbox" type="checkbox">
         Use common stations
@@ -1186,6 +1399,29 @@ const WARN_SCALE_LOW = __WARN_SCALE_LOW__;
 const WARN_SCALE_HIGH = __WARN_SCALE_HIGH__;
 const ECDF_DEBOUNCE_MS = 150;
 
+// Cinzia KGE\u2032 colour classes
+const KGE_CLASSES = [
+  {lo: -Infinity, hi: -0.41, color: "#d4d4d4", label: "KGE\u2032 < \u22120.41"},
+  {lo: -0.41,     hi: 0,     color: "#f8fbb3", label: "\u22120.41 \u2264 KGE\u2032 < 0"},
+  {lo: 0,         hi: 0.2,   color: "#fac4fa", label: "0 \u2264 KGE\u2032 < 0.2"},
+  {lo: 0.2,       hi: 0.5,   color: "#ca12de", label: "0.2 \u2264 KGE\u2032 < 0.5"},
+  {lo: 0.5,       hi: 0.7,   color: "#6592fb", label: "0.5 \u2264 KGE\u2032 < 0.7"},
+  {lo: 0.7,       hi: 0.8,   color: "#0a0afd", label: "0.7 \u2264 KGE\u2032 < 0.8"},
+  {lo: 0.8,       hi: Infinity, color: "#0d138e", label: "KGE\u2032 \u2265 0.8"}
+];
+
+function kgeColor(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "lightgrey";
+  const v = Number(value);
+  for (const c of KGE_CLASSES) {
+    if (v >= c.lo && v < c.hi) return c.color;
+  }
+  return "#0d138e";
+}
+
+let currentMapExpver = null;
+let stationTraceIndices = [];
+
 const mapDiv = document.getElementById("map");
 const globalPreset = ZOOM_PRESETS.find(p => p.name === "Global") || {
   lon: [-180, 180],
@@ -1204,8 +1440,8 @@ const DEFAULT_CENTER = {
   lat: 0.5 * (DEFAULT_EXTENT.south + DEFAULT_EXTENT.north)
 };
 
-let currentGeoCenter = {lon: DEFAULT_CENTER.lon, lat: DEFAULT_CENTER.lat};
-let currentGeoScale = 1.0;
+let currentMapCenter = {lon: DEFAULT_CENTER.lon, lat: DEFAULT_CENTER.lat};
+let currentMapZoom = 3.5;
 let currentVisibleExtent = {
   south: DEFAULT_EXTENT.south,
   west: DEFAULT_EXTENT.west,
@@ -1223,6 +1459,45 @@ const stationPayloadCache = new Map();
 const STATION_FETCH_TIMEOUT_MS = 12000;
 const STATION_SUGGESTION_LIMIT = 50;
 let stationSearchMatches = [];
+
+// Selected forecast lead time (1-based) for LSTM hydrographs with lead_series.
+// 1 = analysis (+6 h, snaps to obs); higher = longer-range forecast lead.
+let SELECTED_DA_LEAD = 1;
+let LEAD_COUNT = 20;  // Updated dynamically based on station data
+const LEAD_STEP_HOURS = 6;
+
+function buildLeadSelect(nLeads) {
+  const sel = document.getElementById("lead-select");
+  if (!sel) return;
+  sel.innerHTML = "";
+
+  // Use provided nLeads, or fall back to LEAD_COUNT
+  const actualLeads = nLeads || LEAD_COUNT;
+
+  // If station has lead_indices (subset), map them correctly
+  const leadIndices = window.CURRENT_LEAD_INDICES || Array.from({length: actualLeads}, (_, i) => i);
+
+  for (let i = 0; i < leadIndices.length; i++) {
+    const leadIdx = leadIndices[i];
+    const lead = leadIdx + 1;  // Convert 0-based to 1-based
+    const hrs = lead * LEAD_STEP_HOURS;
+    const opt = document.createElement("option");
+    opt.value = String(lead);
+    const days = hrs / 24;
+    const daysLabel = Number.isInteger(days) ? days + " d" : days.toFixed(2) + " d";
+    opt.textContent = "Lead " + lead + " (+" + hrs + " h / " + daysLabel + ")";
+    if (i === 0) opt.textContent += " — analysis";
+    sel.appendChild(opt);
+  }
+  sel.value = String(SELECTED_DA_LEAD);
+  sel.addEventListener("change", function() {
+    const v = parseInt(sel.value, 10);
+    SELECTED_DA_LEAD = (Number.isFinite(v) && v >= 1) ? v : 1;
+    if (currentStationIndex !== null) {
+      loadAndPlotStation(currentStationIndex);
+    }
+  });
+}
 
 function initEnvironmentWarning() {
   const warning = document.getElementById("transport-warning");
@@ -1345,173 +1620,67 @@ function stationInsideExtent(station, extent) {
   return lon >= west || lon <= east;
 }
 
-function deriveExtentFromCenterScale(centerLon, centerLat, scale) {
-  const s = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
-
-  const defaultLonSpan = longitudeSpanDegrees(DEFAULT_EXTENT);
-  const defaultLatSpan = Number(DEFAULT_EXTENT.north) - Number(DEFAULT_EXTENT.south);
-
-  const lonSpan = Math.max(0.5, Math.min(360, defaultLonSpan / s));
-  const latSpan = Math.max(0.5, Math.min(180, defaultLatSpan / s));
-
-  const cLon = normalizeLongitude(centerLon);
-  const cLat = clampLatitude(centerLat);
-
-  const centerLonSafe = cLon === null ? DEFAULT_CENTER.lon : cLon;
-  const centerLatSafe = cLat === null ? DEFAULT_CENTER.lat : cLat;
-
-  return {
-    south: clampLatitude(centerLatSafe - 0.5 * latSpan),
-    west: normalizeLongitude(centerLonSafe - 0.5 * lonSpan),
-    north: clampLatitude(centerLatSafe + 0.5 * latSpan),
-    east: normalizeLongitude(centerLonSafe + 0.5 * lonSpan)
-  };
-}
-
-function readRangeFromPayload(payload, keyBase) {
-  if (!payload) return null;
-
-  if (Array.isArray(payload[keyBase]) && payload[keyBase].length >= 2) {
-    return [Number(payload[keyBase][0]), Number(payload[keyBase][1])];
-  }
-
-  const k0 = keyBase + "[0]";
-  const k1 = keyBase + "[1]";
-
-  if (payload[k0] !== undefined && payload[k1] !== undefined) {
-    return [Number(payload[k0]), Number(payload[k1])];
-  }
-
-  return null;
-}
-
 function deriveInitialExtentFromMap() {
-  const fallback = {
-    south: DEFAULT_EXTENT.south,
-    west: DEFAULT_EXTENT.west,
-    north: DEFAULT_EXTENT.north,
-    east: DEFAULT_EXTENT.east
-  };
-
-  if (!mapDiv || !mapDiv.layout || !mapDiv.layout.geo) {
-    return fallback;
+  if (!mapDiv || !mapDiv.layout || !mapDiv.layout.map) {
+    return {
+      south: DEFAULT_EXTENT.south,
+      west: DEFAULT_EXTENT.west,
+      north: DEFAULT_EXTENT.north,
+      east: DEFAULT_EXTENT.east
+    };
   }
 
-  const geo = mapDiv.layout.geo;
-  const lonRange = geo.lonaxis && Array.isArray(geo.lonaxis.range) ? geo.lonaxis.range : null;
-  const latRange = geo.lataxis && Array.isArray(geo.lataxis.range) ? geo.lataxis.range : null;
+  const m = mapDiv.layout.map;
+  const centerLon = m.center && m.center.lon !== undefined ? m.center.lon : DEFAULT_CENTER.lon;
+  const centerLat = m.center && m.center.lat !== undefined ? m.center.lat : DEFAULT_CENTER.lat;
+  const zoom = m.zoom !== undefined ? Number(m.zoom) : 3.5;
 
-  if (lonRange && latRange) {
-    const west = normalizeLongitude(lonRange[0]);
-    const east = normalizeLongitude(lonRange[1]);
-    const south = clampLatitude(Math.min(latRange[0], latRange[1]));
-    const north = clampLatitude(Math.max(latRange[0], latRange[1]));
+  currentMapCenter = {lon: centerLon, lat: centerLat};
+  currentMapZoom = zoom;
 
-    if (west !== null && east !== null && south !== null && north !== null) {
-      return {south: south, west: west, north: north, east: east};
-    }
-  }
+  return extentFromCenterZoom(currentMapCenter, currentMapZoom);
+}
 
-  const centerLon = geo.center && geo.center.lon !== undefined ? geo.center.lon : DEFAULT_CENTER.lon;
-  const centerLat = geo.center && geo.center.lat !== undefined ? geo.center.lat : DEFAULT_CENTER.lat;
-  const scale = geo.projection && geo.projection.scale !== undefined ? Number(geo.projection.scale) : 1.0;
-
-  const normalizedCenterLon = normalizeLongitude(centerLon);
-  const clampedCenterLat = clampLatitude(centerLat);
-
-  currentGeoCenter = {
-    lon: normalizedCenterLon !== null ? normalizedCenterLon : DEFAULT_CENTER.lon,
-    lat: clampedCenterLat !== null ? clampedCenterLat : DEFAULT_CENTER.lat
+function extentFromCenterZoom(center, zoom) {
+  // Approximate extent from center + zoom (Mercator tiles)
+  const latSpan = 180 / Math.pow(2, zoom);
+  const lonSpan = 360 / Math.pow(2, zoom);
+  return {
+    south: clampLatitude(center.lat - 0.5 * latSpan),
+    north: clampLatitude(center.lat + 0.5 * latSpan),
+    west: normalizeLongitude(center.lon - 0.5 * lonSpan),
+    east: normalizeLongitude(center.lon + 0.5 * lonSpan)
   };
-  currentGeoScale = Number.isFinite(scale) && scale > 0 ? scale : 1.0;
-
-  return deriveExtentFromCenterScale(currentGeoCenter.lon, currentGeoCenter.lat, currentGeoScale);
 }
 
 function updateExtentCacheFromRelayout(payload) {
   let changed = false;
-  let hasExplicitRanges = false;
-  let hasCenterLon = false;
-  let hasCenterLat = false;
-  let hasScale = false;
 
-  const lonRange = readRangeFromPayload(payload, "geo.lonaxis.range");
-  const latRange = readRangeFromPayload(payload, "geo.lataxis.range");
-
-  if (lonRange) {
-    const west = normalizeLongitude(lonRange[0]);
-    const east = normalizeLongitude(lonRange[1]);
-    if (west !== null && east !== null) {
-      currentVisibleExtent.west = west;
-      currentVisibleExtent.east = east;
-      hasExplicitRanges = true;
-      changed = true;
-    }
-  }
-
-  if (latRange) {
-    const south = clampLatitude(Math.min(latRange[0], latRange[1]));
-    const north = clampLatitude(Math.max(latRange[0], latRange[1]));
-    if (south !== null && north !== null) {
-      currentVisibleExtent.south = south;
-      currentVisibleExtent.north = north;
-      hasExplicitRanges = true;
-      changed = true;
-    }
-  }
-
-  if (payload && payload["geo.center.lon"] !== undefined) {
-    const lon = normalizeLongitude(payload["geo.center.lon"]);
-    if (lon !== null) {
-      currentGeoCenter.lon = lon;
-      hasCenterLon = true;
-      changed = true;
-    }
-  }
-
-  if (payload && payload["geo.center.lat"] !== undefined) {
-    const lat = clampLatitude(payload["geo.center.lat"]);
-    if (lat !== null) {
-      currentGeoCenter.lat = lat;
-      hasCenterLat = true;
-      changed = true;
-    }
-  }
-
-  if (payload && payload["geo.projection.scale"] !== undefined) {
-    const scale = Number(payload["geo.projection.scale"]);
-    if (Number.isFinite(scale) && scale > 0) {
-      const previousScale = currentGeoScale;
-      currentGeoScale = scale;
-      hasScale = true;
-
-      if (!hasExplicitRanges) {
-        const oldLonSpan = longitudeSpanDegrees(currentVisibleExtent);
-        const oldLatSpan = Math.max(0.5, Number(currentVisibleExtent.north) - Number(currentVisibleExtent.south));
-        const ratio = previousScale > 0 ? (previousScale / currentGeoScale) : 1.0;
-
-        const newLonSpan = Math.max(0.5, Math.min(360, oldLonSpan * ratio));
-        const newLatSpan = Math.max(0.5, Math.min(180, oldLatSpan * ratio));
-
-        currentVisibleExtent.west = normalizeLongitude(currentGeoCenter.lon - 0.5 * newLonSpan);
-        currentVisibleExtent.east = normalizeLongitude(currentGeoCenter.lon + 0.5 * newLonSpan);
-        currentVisibleExtent.south = clampLatitude(currentGeoCenter.lat - 0.5 * newLatSpan);
-        currentVisibleExtent.north = clampLatitude(currentGeoCenter.lat + 0.5 * newLatSpan);
-      }
-
-      changed = true;
-    }
-  }
-
-  if (!hasExplicitRanges && !hasScale && (hasCenterLon || hasCenterLat)) {
-    const lonSpan = longitudeSpanDegrees(currentVisibleExtent);
-    const latSpan = Math.max(0.5, Number(currentVisibleExtent.north) - Number(currentVisibleExtent.south));
-
-    currentVisibleExtent.west = normalizeLongitude(currentGeoCenter.lon - 0.5 * lonSpan);
-    currentVisibleExtent.east = normalizeLongitude(currentGeoCenter.lon + 0.5 * lonSpan);
-    currentVisibleExtent.south = clampLatitude(currentGeoCenter.lat - 0.5 * latSpan);
-    currentVisibleExtent.north = clampLatitude(currentGeoCenter.lat + 0.5 * latSpan);
+  if (payload && payload["map.center"]) {
+    const c = payload["map.center"];
+    if (c.lon !== undefined) currentMapCenter.lon = normalizeLongitude(c.lon);
+    if (c.lat !== undefined) currentMapCenter.lat = clampLatitude(c.lat);
     changed = true;
+  }
+  if (payload && payload["map.center.lon"] !== undefined) {
+    currentMapCenter.lon = normalizeLongitude(payload["map.center.lon"]);
+    changed = true;
+  }
+  if (payload && payload["map.center.lat"] !== undefined) {
+    currentMapCenter.lat = clampLatitude(payload["map.center.lat"]);
+    changed = true;
+  }
+  if (payload && payload["map.zoom"] !== undefined) {
+    currentMapZoom = Number(payload["map.zoom"]);
+    changed = true;
+  }
+
+  if (changed) {
+    const ext = extentFromCenterZoom(currentMapCenter, currentMapZoom);
+    currentVisibleExtent.south = ext.south;
+    currentVisibleExtent.north = ext.north;
+    currentVisibleExtent.west = ext.west;
+    currentVisibleExtent.east = ext.east;
   }
 
   return changed;
@@ -1580,6 +1749,16 @@ function initEcdfPanel() {
     checkbox.disabled = EXPVERS.length <= 1;
     checkbox.addEventListener("change", function() {
       updateEcdfPanel();
+    });
+  }
+
+  // Wire Observed toggle to reload hydrograph
+  const obsToggle = document.getElementById("obs-checkbox");
+  if (obsToggle) {
+    obsToggle.addEventListener("change", function() {
+      if (currentStationIndex !== null) {
+        loadAndPlotStation(currentStationIndex);
+      }
     });
   }
 
@@ -1791,10 +1970,11 @@ function computeObsModelScaleDiagnostic(payloadsByExpver) {
     }
   }
 
+  const obsValues = obsPayload.discharge || obsPayload.values || [];
   const ratios = [];
   for (let i = 0; i < obsPayload.time.length; i++) {
     const day = obsPayload.time[i].slice(0, 10);
-    const obs = Number(obsPayload.values[i]);
+    const obs = Number(obsValues[i]);
     const model = modelByTime.get(day);
 
     if (Number.isFinite(obs) && Number.isFinite(model) && obs > 0 && model > 0) {
@@ -1825,13 +2005,14 @@ function zoomToPreset(preset) {
   const lonCenter = 0.5 * (lon0 + lon1);
   const latCenter = 0.5 * (lat0 + lat1);
 
+  // Estimate zoom level from lat span
+  const latSpan = Math.abs(lat1 - lat0);
+  const zoom = Math.max(1, Math.log2(180 / latSpan) + 1);
+
   const update = {
-    "geo.center.lon": lonCenter,
-    "geo.center.lat": latCenter,
-    "geo.lonaxis.autorange": false,
-    "geo.lataxis.autorange": false,
-    "geo.lonaxis.range": [lon0, lon1],
-    "geo.lataxis.range": [lat0, lat1]
+    "map.center.lon": lonCenter,
+    "map.center.lat": latCenter,
+    "map.zoom": zoom
   };
 
   Plotly.relayout("map", update);
@@ -1858,18 +2039,18 @@ function zoomToStationBox(station, halfSpanDegrees = 5) {
   const span = Number(halfSpanDegrees);
   if (!Number.isFinite(span) || span <= 0) return;
 
-  const lat0 = clampLatitude(lat - span);
-  const lat1 = clampLatitude(lat + span);
-  const lon0 = Math.max(-180, lon - span);
-  const lon1 = Math.min(180, lon + span);
+  // Estimate zoom from span
+  const zoom = Math.max(1, Math.log2(180 / span) + 1);
+
+  const lon0 = lon - span;
+  const lon1 = lon + span;
+  const lat0 = lat - span;
+  const lat1 = lat + span;
 
   const update = {
-    "geo.center.lon": lon,
-    "geo.center.lat": lat,
-    "geo.lonaxis.autorange": false,
-    "geo.lataxis.autorange": false,
-    "geo.lonaxis.range": [lon0, lon1],
-    "geo.lataxis.range": [lat0, lat1]
+    "map.center.lon": lon,
+    "map.center.lat": lat,
+    "map.zoom": zoom
   };
 
   Plotly.relayout("map", update);
@@ -1895,45 +2076,42 @@ function updateSelectedStationMarker(station) {
 
   const targetTraces = [
     {
-      type: "scattergeo",
+      type: "scattermap",
       lon: [lon],
       lat: [lat],
       mode: "markers",
       hoverinfo: "skip",
       showlegend: false,
       marker: {
-        symbol: "circle-open",
         size: 22,
-        color: "rgb(255,0,0)",
-        line: {color: "rgb(255,0,0)", width: 3}
+        color: "rgba(255,0,0,0)",
+        opacity: 1
       }
     },
     {
-      type: "scattergeo",
+      type: "scattermap",
       lon: [lon],
       lat: [lat],
       mode: "markers",
       hoverinfo: "skip",
       showlegend: false,
       marker: {
-        symbol: "circle-open",
-        size: 14,
-        color: "rgb(255,0,0)",
-        line: {color: "rgb(255,0,0)", width: 3}
+        size: 30,
+        color: "rgba(255,0,0,0.3)",
+        opacity: 0.8
       }
     },
     {
-      type: "scattergeo",
+      type: "scattermap",
       lon: [lon],
       lat: [lat],
       mode: "markers",
       hoverinfo: "skip",
       showlegend: false,
       marker: {
-        symbol: "cross-open",
-        size: 28,
-        color: "rgb(255,0,0)",
-        line: {color: "rgb(255,0,0)", width: 3}
+        size: 38,
+        color: "rgba(255,0,0,0.15)",
+        opacity: 0.6
       }
     }
   ];
@@ -1977,8 +2155,12 @@ function updateSelectedStationMarker(station) {
 }
 
 function resetGlobalZoom() {
-  const globalPreset = ZOOM_PRESETS.find(p => p.name === "Global");
-  if (globalPreset) zoomToPreset(globalPreset);
+  const europePreset = ZOOM_PRESETS.find(p => p.name === "Europe");
+  if (europePreset) zoomToPreset(europePreset);
+  else {
+    const globalPreset = ZOOM_PRESETS.find(p => p.name === "Global");
+    if (globalPreset) zoomToPreset(globalPreset);
+  }
 }
 
 function buildZoomSelect() {
@@ -2257,14 +2439,12 @@ function stationInfo(station, payloadsByExpver) {
   s += "<tr><th>Country</th><td>" + esc(station.country_code) + "</td></tr>";
   s += "<tr><th>River</th><td>" + esc(station.river) + "</td></tr>";
   s += "<tr><th>Obs lon/lat</th><td>" + esc(station.lon) + ", " + esc(station.lat) + "</td></tr>";
-  s += "<tr><th>Reference model lon/lat</th><td>" + esc(station.model_lon) + ", " + esc(station.model_lat) + "</td></tr>";
-  s += "<tr><th>Station-model distance</th><td>" + esc(station.distance_station_to_model_km) + " km</td></tr>";
   s += "<tr><th>Station upstream area</th><td>" + esc(station.upstream_area_km2) + " km²</td></tr>";
   s += "</table>";
 
   s += "<b>Experiment performance, sorted by " + esc(SELECTED_METRIC) + "</b>";
   s += "<table>";
-  s += "<tr><th>Experiment</th><th>KGE</th><th>r</th><th>RMSE</th><th>Days</th><th>Model area km²</th><th>Area diff %</th></tr>";
+  s += "<tr><th>Experiment</th><th>KGE\u2032</th><th>r</th><th>\u03b3 (var)</th><th>\u03b2 (bias)</th><th>RMSE</th><th>Days</th></tr>";
 
   const rows = sortedRuns(station);
 
@@ -2279,16 +2459,17 @@ function stationInfo(station, payloadsByExpver) {
 
     const colour = EXPERIMENT_COLOURS[expver] || "black";
     const bestMark = expver === station.best_expver ? " ★" : "";
+    const pm = (payloadsByExpver[expver] && payloadsByExpver[expver].metrics) || {};
 
     s += "<tr>";
     s += "<td><span style='color:" + esc(colour) + ";font-weight:bold;'>●</span> " +
          esc(expver) + esc(bestMark) + "</td>";
     s += "<td>" + esc(fmt(run.kge)) + "</td>";
     s += "<td>" + esc(fmt(run.correlation)) + "</td>";
+    s += "<td>" + esc(fmt(pm.kge_gamma)) + "</td>";
+    s += "<td>" + esc(fmt(pm.kge_beta)) + "</td>";
     s += "<td>" + esc(fmt(run.rmse)) + "</td>";
     s += "<td>" + esc(run.matched_days) + "</td>";
-    s += "<td>" + esc(run.model_upstream_area_km2) + "</td>";
-    s += "<td>" + esc(run.upstream_area_difference_pct) + "</td>";
     s += "</tr>";
   }
 
@@ -2368,11 +2549,39 @@ async function fetchStationPayload(expver, run, signal) {
 }
 
 function chooseObsPayload(payloadsByExpver, expvers = EXPVERS) {
+  // Prefer the densest (continuous) observed series so the obs line stays
+  // continuous regardless of the selected LSTM lead time.
+  let best = null;
+  let bestLen = -1;
   for (const expver of expvers) {
     const payload = payloadsByExpver[expver];
-    if (payload && payload.obs) return payload.obs;
+    if (payload && payload.obs && Array.isArray(payload.obs.time)) {
+      const len = payload.obs.time.length;
+      if (len > bestLen) {
+        bestLen = len;
+        best = payload.obs;
+      }
+    }
   }
-  return null;
+  return best;
+}
+
+function leadTimeAxis(ls, li) {
+  // Compact lead_series stores the lead-1 valid-time axis once as base_time;
+  // lead L (0-based) valid times are that axis shifted forward by
+  // L * step_hours hours. Falls back to a legacy per-lead time[] array.
+  if (Array.isArray(ls.time)) return ls.time[li];
+  const base = ls.base_time;
+  if (!Array.isArray(base)) return [];
+  const stepH = ls.step_hours || LEAD_STEP_HOURS;
+  const shiftMs = li * stepH * 3600 * 1000;
+  if (shiftMs === 0) return base;
+  const pad = n => String(n).padStart(2, "0");
+  return base.map(function(ts) {
+    const t = new Date(new Date(String(ts).replace(" ", "T") + "Z").getTime() + shiftMs);
+    return t.getUTCFullYear() + "-" + pad(t.getUTCMonth() + 1) + "-" + pad(t.getUTCDate())
+      + " " + pad(t.getUTCHours()) + ":" + pad(t.getUTCMinutes());
+  });
 }
 
 function normaliseSeries(timeValues, dischargeValues) {
@@ -2466,6 +2675,17 @@ async function loadAndPlotStation(i, options = {}) {
     }
   }
 
+  // Update lead selector with actual n_leads from first available payload
+  for (const expver of EXPVERS) {
+    const payload = payloadsByExpver[expver];
+    if (payload && payload.lead_series) {
+      const nLeads = payload.lead_series.n_leads;
+      window.CURRENT_LEAD_INDICES = payload.lead_series.lead_indices;
+      buildLeadSelect(nLeads);
+      break;
+    }
+  }
+
   const traces = [];
   const activeExpvers = selectedEcdfExperiments();
 
@@ -2474,60 +2694,108 @@ async function loadAndPlotStation(i, options = {}) {
     if (!payload) continue;
 
     const run = station.runs[expver];
-    const series = normaliseSeries(payload.time, payload.model_discharge);
+
+    // If this experiment carries per-lead forecast series, plot the selected
+    // lead time; each point is that fixed lead from a different issue-time run.
+    let series;
+    let leadKge = null;
+    let leadLabel = "";
+    const ls = payload.lead_series;
+    if (ls && Array.isArray(ls.sim) &&
+        SELECTED_DA_LEAD >= 1 && SELECTED_DA_LEAD <= ls.n_leads) {
+      const li = SELECTED_DA_LEAD - 1;
+      series = normaliseSeries(leadTimeAxis(ls, li), ls.sim[li]);
+      if (Array.isArray(ls.kge)) leadKge = ls.kge[li];
+      leadLabel = " (lead " + SELECTED_DA_LEAD + ")";
+    } else {
+      series = normaliseSeries(payload.time, payload.model_discharge);
+    }
     if (series.time.length === 0) continue;
 
-    traces.push({
+    const kgeShown = (leadKge !== null && leadKge !== undefined) ? leadKge : run.kge;
+
+    const modelTrace = {
       x: series.time,
       y: series.values,
       type: "scatter",
-      mode: "lines",
-      name: "Model " + expver,
+      mode: leadLabel ? "lines+markers" : "lines",
+      name: "Model " + expver + leadLabel,
       yaxis: "y",
       line: {
         color: EXPERIMENT_COLOURS[expver] || undefined,
         width: expver === station.best_expver ? 3 : 1.8
       },
       hovertemplate:
-        "%{x}<br>" + expver + " Q=%{y} m³/s" +
-        "<br>KGE=" + fmt(run.kge) +
+        "%{x}<br>" + expver + leadLabel + " Q=%{y} m³/s" +
+        "<br>KGE=" + fmt(kgeShown) +
         "<br>r=" + fmt(run.correlation) +
         "<extra></extra>"
-    });
+    };
+    // Only attach a marker container when markers are actually drawn. Setting
+    // marker:undefined explicitly breaks Plotly 3.5.0 supplyDefaults
+    // ("'line' in undefined") and blanks the whole hydrograph.
+    if (leadLabel) {
+      modelTrace.marker = {size: 5};
+    }
+    traces.push(modelTrace);
   }
 
-  const obs = activeExpvers.length > 0
-    ? chooseObsPayload(payloadsByExpver, activeExpvers)
-    : null;
+  // Show observations if the Observed checkbox is checked
+  const obsCheckbox = document.getElementById("obs-checkbox");
+  const showObs = !obsCheckbox || obsCheckbox.checked;
 
-  if (obs) {
-    const obsSeries = normaliseSeries(obs.time, obs.values);
-    traces.push({
-      x: obsSeries.time,
-      y: obsSeries.values,
-      type: "scatter",
-      mode: "lines+markers",
-      name: "Observed streamflow",
-      yaxis: "y",
-      line: {dash: "dot", color: "black", width: 2.2},
-      marker: {size: 4, color: "black"},
-      hovertemplate: "%{x}<br>Obs Q=%{y} m³/s<extra></extra>"
-    });
+  if (showObs) {
+    const obs = chooseObsPayload(payloadsByExpver, EXPVERS);
+
+    if (obs) {
+      const obsDischarge = obs.discharge || obs.values || [];
+      const obsSeries = normaliseSeries(obs.time, obsDischarge);
+      if (obsSeries.time.length > 0) {
+        traces.push({
+          x: obsSeries.time,
+          y: obsSeries.values,
+          type: "scatter",
+          mode: "lines",
+          name: "Observed",
+          yaxis: "y",
+          line: {color: "black", width: 2.5},
+          hovertemplate: "%{x}<br>Obs Q=%{y} m\\u00b3/s<extra></extra>"
+        });
+      }
+
+      // Add red dots at times when observations are missing
+      const missingTimes = obs.missing_times || [];
+      if (missingTimes.length > 0) {
+        const missingY = new Array(missingTimes.length).fill(null);
+        traces.push({
+          x: missingTimes,
+          y: missingY,
+          type: "scatter",
+          mode: "markers",
+          name: "Obs missing",
+          yaxis: "y",
+          marker: {
+            color: "red",
+            size: 6,
+            symbol: "circle",
+            line: {color: "darkred", width: 1.5}
+          },
+          hovertemplate: "%{x}<br>Observation unavailable<extra></extra>",
+          showlegend: true
+        });
+      }
+    }
   }
 
   if (traces.length === 0) {
-    if (activeExpvers.length === 0) {
-      hydroDiv.innerHTML =
-        "<p style='padding:12px;color:#444;'>Select at least one experiment to draw hydrographs.</p>";
-    } else {
-      hydroDiv.innerHTML =
-        "<p style='padding:12px;color:red;'>No hydrograph could be loaded.</p>";
-    }
+    hydroDiv.innerHTML =
+      "<p style='padding:12px;color:red;'>No hydrograph could be loaded for this station.</p>";
   } else {
     // Remove stale loading paragraph before drawing updated traces.
+    const stationIdLabel = stationSearchId(station, i);
     const layout = {
       title: {
-        text: "Hydrograph comparison: " + station.name,
+        text: "Hydrograph comparison: " + station.name + " (ID " + stationIdLabel + ")",
         x: 0.02,
         xanchor: "left",
         y: 0.96,
@@ -2620,13 +2888,196 @@ function scheduleResize() {
   }, 120);
 }
 
-buildZoomSelect();
-buildStationSelector();
-initEcdfPanel();
-initEnvironmentWarning();
+// --- Model selector for dynamic map colouring ---
+function findStationTraceIndices() {
+  // Station traces are all scattermap traces with customdata arrays (not rivers, not selection markers)
+  stationTraceIndices = [];
+  if (!mapDiv || !Array.isArray(mapDiv.data)) return;
+  for (let t = 0; t < mapDiv.data.length; t++) {
+    const tr = mapDiv.data[t];
+    if (tr.type === "scattermap" && tr.mode === "markers" && Array.isArray(tr.customdata) && tr.customdata.length > 1) {
+      stationTraceIndices.push(t);
+    }
+  }
+}
 
-currentVisibleExtent = deriveInitialExtentFromMap();
-scheduleEcdfUpdate();
+function recolourMapByExperiment(expver) {
+  currentMapExpver = expver;
+  if (stationTraceIndices.length === 0) findStationTraceIndices();
+  const pending = [];
+  for (const t of stationTraceIndices) {
+    const trace = mapDiv.data[t];
+    const newColors = [];
+    for (const idx of trace.customdata) {
+      const station = STATIONS[idx];
+      if (!station) { newColors.push("lightgrey"); continue; }
+      const run = station.runs[expver];
+      const val = run ? run[SELECTED_METRIC] : null;
+      newColors.push(kgeColor(val));
+    }
+    pending.push(Plotly.restyle("map", {"marker.color": [newColors]}, [t]));
+  }
+  return Promise.all(pending);
+}
+
+function diffColor(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "lightgrey";
+  const v = Number(value);
+  // Red-white-blue diverging: red = negative (worse), blue = positive (better)
+  if (v <= -0.3) return "rgb(178,24,43)";
+  if (v <= -0.15) return "rgb(239,138,98)";
+  if (v <= -0.05) return "rgb(253,219,199)";
+  if (v < 0.05) return "rgb(240,240,240)";
+  if (v < 0.15) return "rgb(209,229,240)";
+  if (v < 0.3) return "rgb(103,169,207)";
+  return "rgb(33,102,172)";
+}
+
+function recolourMapByDifference(expA, expB) {
+  currentMapExpver = expA + " - " + expB;
+  if (stationTraceIndices.length === 0) findStationTraceIndices();
+  for (const t of stationTraceIndices) {
+    const trace = mapDiv.data[t];
+    const newColors = [];
+    for (const idx of trace.customdata) {
+      const station = STATIONS[idx];
+      if (!station) { newColors.push("lightgrey"); continue; }
+      const runA = station.runs[expA];
+      const runB = station.runs[expB];
+      const valA = runA ? runA[SELECTED_METRIC] : null;
+      const valB = runB ? runB[SELECTED_METRIC] : null;
+      if (valA === null || valB === null) { newColors.push("lightgrey"); continue; }
+      newColors.push(diffColor(valA - valB));
+    }
+    Plotly.restyle("map", {"marker.color": [newColors]}, [t]);
+  }
+}
+
+function buildMapExpSelect() {
+  const sel = document.getElementById("map-exp-select");
+  if (!sel) return;
+
+  // Individual experiments
+  for (const expver of EXPVERS) {
+    const opt = document.createElement("option");
+    opt.value = expver;
+    opt.textContent = expver;
+    sel.appendChild(opt);
+  }
+
+  // Pairwise differences
+  if (EXPVERS.length >= 2) {
+    const sep = document.createElement("option");
+    sep.disabled = true;
+    sep.textContent = "── differences ──";
+    sel.appendChild(sep);
+    for (let i = 0; i < EXPVERS.length; i++) {
+      for (let j = 0; j < EXPVERS.length; j++) {
+        if (i === j) continue;
+        const opt = document.createElement("option");
+        opt.value = "diff:" + EXPVERS[i] + ":" + EXPVERS[j];
+        opt.textContent = EXPVERS[i] + " \u2212 " + EXPVERS[j];
+        sel.appendChild(opt);
+      }
+    }
+  }
+
+  sel.value = EXPVERS[0];
+  sel.addEventListener("change", function() {
+    const v = this.value;
+    if (v.startsWith("diff:")) {
+      const parts = v.split(":");
+      recolourMapByDifference(parts[1], parts[2]);
+    } else {
+      recolourMapByExperiment(v);
+    }
+  });
+}
+
+// --- Toggle buttons ---
+function initToggleButtons() {
+  // Reservoir toggle
+  const resBtn = document.getElementById("toggle-reservoirs");
+  if (resBtn && mapDiv && Array.isArray(mapDiv.data)) {
+    let resTraceIdx = null;
+    for (let t = 0; t < mapDiv.data.length; t++) {
+      if (mapDiv.data[t].name === "Reservoirs (DOR)") { resTraceIdx = t; break; }
+    }
+    if (resTraceIdx !== null) {
+      resBtn.addEventListener("click", function() {
+        const current = mapDiv.data[resTraceIdx].visible;
+        const next = (current === true || current === undefined) ? false : true;
+        Plotly.restyle("map", {visible: next}, [resTraceIdx]);
+        resBtn.style.opacity = next ? "1" : "0.5";
+      });
+      resBtn.style.opacity = "0.5";  // starts hidden
+    } else {
+      resBtn.style.display = "none";
+    }
+  }
+
+  // Legend toggle
+  const legBtn = document.getElementById("toggle-legend");
+  if (legBtn && mapDiv) {
+    let legendVisible = true;
+    legBtn.addEventListener("click", function() {
+      legendVisible = !legendVisible;
+      Plotly.relayout("map", {showlegend: legendVisible});
+      legBtn.style.opacity = legendVisible ? "1" : "0.5";
+    });
+  }
+}
+
+
+function safeStep(label, fn) {
+  try {
+    fn();
+  } catch (err) {
+    console.error("[init] step failed: " + label, err);
+  }
+}
+
+// Initialise the eCDF panel first and independently so a failure in any other
+// init step cannot leave the distribution ("histogram") panel blank.
+safeStep("initEcdfPanel", initEcdfPanel);
+safeStep("buildZoomSelect", buildZoomSelect);
+safeStep("resetGlobalZoom", resetGlobalZoom);
+safeStep("buildStationSelector", buildStationSelector);
+safeStep("buildMapExpSelect", buildMapExpSelect);
+safeStep("buildLeadSelect", buildLeadSelect);
+safeStep("initToggleButtons", initToggleButtons);
+safeStep("initEnvironmentWarning", initEnvironmentWarning);
+
+safeStep("initialExtent", function() {
+  currentVisibleExtent = deriveInitialExtentFromMap();
+});
+safeStep("scheduleEcdfUpdate", scheduleEcdfUpdate);
+
+// Apply initial colouring by first experiment. The maplibre basemap style may
+// not be ready immediately (Plotly rejects restyle with "Style is not done
+// loading"), so retry until it succeeds instead of leaking an unhandled
+// rejection.
+function applyInitialMapColour(attempt) {
+  attempt = attempt || 0;
+  try {
+    findStationTraceIndices();
+  } catch (e) {
+    console.error("[init] findStationTraceIndices failed", e);
+  }
+  Promise.resolve()
+    .then(function() { return recolourMapByExperiment(EXPVERS[0]); })
+    .catch(function(err) {
+      if (attempt < 40) {
+        window.setTimeout(function() { applyInitialMapColour(attempt + 1); }, 200);
+      } else {
+        console.warn("Initial map colouring gave up after retries:", err);
+      }
+    });
+}
+
+window.setTimeout(function() {
+  applyInitialMapColour(0);
+}, 300);
 
 window.addEventListener("resize", function() {
   scheduleResize();
@@ -2634,10 +3085,12 @@ window.addEventListener("resize", function() {
 
 window.setTimeout(scheduleResize, 200);
 
-mapDiv.on("plotly_relayout", function(eventData) {
-  updateExtentCacheFromRelayout(eventData || {});
-  scheduleEcdfUpdate();
-});
+if (mapDiv && typeof mapDiv.on === "function") {
+  mapDiv.on("plotly_relayout", function(eventData) {
+    updateExtentCacheFromRelayout(eventData || {});
+    scheduleEcdfUpdate();
+  });
+}
 
 mapDiv.on("plotly_click", function(data) {
   if (!data || !data.points || data.points.length === 0) return;
@@ -2658,6 +3111,7 @@ mapDiv.on("plotly_click", function(data) {
 
     html = (
         html_template
+        .replace("__THEME_HEAD__", build_theme_head())
         .replace("__MAP_DIV__", map_div)
         .replace("__RECORDS_JSON__", records_json)
         .replace("__EXPVERS_JSON__", expvers_json)
@@ -2745,6 +3199,7 @@ def main():
         label=label,
         metric=args.metric,
         control_expver=args.control_expver,
+        exclude_from_best=args.exclude_from_best,
     )
 
     fig = build_map(records=records, args=args)

@@ -36,7 +36,7 @@ RIVER_RESOL=50m
 SITE_BUNDLE_DIRNAME="site_bundle"
 
 # Switches
-EXTRACT_MARS_GRIB=True
+EXTRACT_MARS_GRIB=False
 EXTRACT_MARS_HYDRO=True
 EXTRACT_GLOFAS_HYDRO=True
 INCLUDE_GLOFAS_IN_DASHBOARD=True
@@ -63,7 +63,7 @@ MARS_EXPERIMENTS=(
 )
 
 # GloFAS experiments from local GRIB files (not retrieved from MARS here)
-GLOFAS_GRIB_DIR="/perm/${USER}/benchmark_cmf_gp4hydro_vs_glofas_discharge_2018_2022"
+GLOFAS_GRIB_DIR="/perm/pad/benchmark_cmf_gp4hydro_vs_glofas_discharge_2018_2022"
 GLOFAS_V4_EXPVER="glofas_v4"
 GLOFAS_V5_EXPVER="glofas_v5"
 GLOFAS_V4_PATTERN="glofas_v4.0_ecmf-era5_*.grib"
@@ -184,7 +184,8 @@ for EXPVER in "${MARS_EXPERIMENTS[@]}"; do
     --date-end "${DATE_END}" \
     --resolution "${RESOLUTION}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
-    --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+    --grib-root /perm/pad/flood_cases/grib \
+    --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 done
 else
 echo "MARS hydrograph extraction skipped (EXTRACT_MARS_HYDRO=False)."
@@ -206,7 +207,7 @@ if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]] ; then
     --grib-file-pattern "${GLOFAS_V4_PATTERN}" \
     --discharge-shortnames "${GLOFAS_SHORTNAMES[@]}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
-    --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+    --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 
   echo
   echo "------------------------------------------------------------------"
@@ -223,7 +224,7 @@ if [[ ${EXTRACT_GLOFAS_HYDRO} == True ]] ; then
     --grib-file-pattern "${GLOFAS_V5_PATTERN}" \
     --discharge-shortnames "${GLOFAS_SHORTNAMES[@]}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
-    --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+    --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 else
   echo "GloFAS hydrograph extraction skipped (EXTRACT_GLOFAS_HYDRO=False)."
 fi

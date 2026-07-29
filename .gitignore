@@ -1,20 +1,42 @@
-Workflow/riverbench_score_cdfs_common_365days.png
-Workflow/riverbench_score_cdfs.png
-Workflow/station_kge_j7xs_glofas_grid.csv
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_Africa.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_all_regions.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_Asia.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_Europe.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_Globe.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_NorthAmerica.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_Oceania.png
-Workflow/riverbench_glofas_kge_cdfs_365days/j7xs_kge_cdf_SouthAmerica.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_Africa.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_Asia.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_Europe.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_Globe.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_NorthAmerica.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_Oceania.png
-Workflow/riverbench_score_cdfs/riverbench_score_cdfs_SouthAmerica.png
-Workflow/j7xs_station_and_glofas_kge_365days.csv
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# ── Retrieved / generated data ───────────────────────────────────────
+*.zarr/
+*.npz
+*.npy
+*.grib
+*.grb
+*.nc
+
+# ── Dashboard / pipeline outputs (never commit; regenerated) ─────────
+dashboard_data/
+site_bundle/
+global_station_dashboard_*.html
 Workflow/ecdf_validation_dashboard.html
+
+# Benchmark plot / metric outputs
+Workflow/riverbench_score_cdfs*
+Workflow/riverbench_glofas_kge_cdfs*/
+Workflow/*_kge*.csv
+Workflow/station_kge_*.csv
+
+# Local input data not part of the repo
+cinzia_dashboard/
+
+# ── Machine-local / editor / secrets ─────────────────────────────────
+# Personal, machine-local guidance for Claude Code — never committed
+CLAUDE.local.md
+# Claude Code settings (machine-local)
+.claude/
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# One-off local upload/refresh helpers (personal, not part of the pipeline)
+Workflow/_upload_refresh.py
+Workflow/_refresh_index_only.py
