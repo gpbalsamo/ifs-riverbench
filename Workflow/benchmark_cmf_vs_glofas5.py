@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
+import subprocess
 import pandas as pd
 import time
 from datetime import datetime, timedelta
@@ -547,6 +549,49 @@ def domain_mask_for_bbox(lats: np.ndarray, lons: np.ndarray, bbox: list[float] |
 # MARS/cache helpers
 # ============================================================
 
+# Path to the system MARS client. Metview's bundled MARS client is too old to
+# parse the GloFAS v5 request keywords (configuration/forcing/timespan/model),
+# so we retrieve via the up-to-date system client and read the GRIB back with
+# Metview. Override with the MARS_CLIENT_EXE environment variable if needed.
+MARS_CLIENT_EXE = os.environ.get("MARS_CLIENT_EXE", "/usr/local/bin/mars")
+
+
+def _format_mars_value(value) -> str:
+    """Render a request value as MARS request-language text.
+
+    Lists/tuples become slash-separated values (MARS list syntax); everything
+    else is stringified as-is.
+    """
+    if isinstance(value, (list, tuple)):
+        return "/".join(str(v) for v in value)
+    return str(value)
+
+
+# Environment variables that Metview injects on import (they point at Metview's
+# bundled, outdated MARS language/config). The system MARS client must not
+# inherit them, or it parses requests with the old language and rejects the
+# GloFAS v5 keywords. We strip them from the subprocess environment only.
+_METVIEW_MARS_ENV_VARS = (
+    "MARS_LANGUAGE_FILE",
+    "MARS_CONFIG",
+    "MARS_TEST_FILE",
+    "MARS_COMPUTE_FLAG",
+)
+
+
+def _mars_retrieve(request: dict, target: Path) -> None:
+    """Retrieve one MARS request to `target` using the system MARS client."""
+    kv_lines = [f"    {k}={_format_mars_value(v)}" for k, v in request.items()]
+    kv_lines.append(f'    target="{target}"')
+    req_text = "retrieve,\n" + ",\n".join(kv_lines) + "\n"
+
+    req_file = target.with_suffix(".marsreq")
+    req_file.write_text(req_text)
+
+    env = {k: v for k, v in os.environ.items() if k not in _METVIEW_MARS_ENV_VARS}
+    subprocess.run([MARS_CLIENT_EXE, str(req_file)], check=True, env=env)
+
+
 def retrieve_or_read(path: Path, request: dict, force: bool = False):
     if path.exists() and not force:
         print("Using cached file:", path)
@@ -554,10 +599,9 @@ def retrieve_or_read(path: Path, request: dict, force: bool = False):
 
     print("MARS request:")
     print(request)
-    fs = mv.retrieve(request)
-    fs.write(str(path))
+    _mars_retrieve(request, path)
     print("Saved:", path)
-    return fs
+    return mv.read(str(path))
 
 def retrieve_glofas(
     date: str,

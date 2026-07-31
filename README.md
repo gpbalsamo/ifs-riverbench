@@ -109,8 +109,15 @@ Cama15lon, Cama15lat, Cama15area, ...
 Default path:
 
 ```text
-/perm/pad/flood_cases/Stations/allstations_V1_2.csv
+/perm/pad/flood_cases/Stations/allstations_V1_3.csv
 ```
+
+Typical path:
+
+```text
+/perm/${USER}/flood_cases/Stations/allstations_V1_2.csv
+```
+
 
 ### Observed discharge
 
@@ -122,10 +129,22 @@ Default NetCDF:
 /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
 ```
 
+Typical path:
+
+```text
+/perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
+```
+
 Recommended Zarr:
 
 ```text
 /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+```
+
+Typical path:
+
+```text
+/perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 ```
 
 ## Optional one-time prep
@@ -405,3 +424,38 @@ sites.sdk
 - Use `--valid-time-shift-hours -24` with the current monthly archive convention.
 - For `experiment_difference`, remember that the result is always `second experiment - first experiment`.
 - For `best_experiment`, use `--control-expver` and a non-zero improvement threshold to avoid over-interpreting negligible differences.
+
+## Conda environment
+
+A pinned `environment.yml` is provided to reproduce the Python environment used
+by the workflow (Python 3.12, conda-forge builds of the ecCodes/Magics/NetCDF/
+PROJ binaries plus the pip packages that link against them).
+
+Create the environment:
+
+```bash
+module load conda            # on ECMWF HPC; otherwise ensure conda/mamba is available
+conda env create -f environment.yml
+```
+
+Activate it before running the workflow:
+
+```bash
+conda activate ifs-riverbench
+```
+
+To update an existing environment after `environment.yml` changes:
+
+```bash
+conda env update -f environment.yml --prune
+```
+
+Notes:
+
+- The environment is named `ifs-riverbench` (change the `name:` field in
+  `environment.yml` to install it under a different name).
+- The ECMWF Sites SDK (`sites`), required only by `03_upload_dashboard.py`, is
+  **not** on public PyPI and is therefore commented out in `environment.yml`.
+  If you need the dashboard upload step, install it separately into the active
+  environment (e.g. `pip install sites` from ECMWF's internal package index).
+  The extraction and dashboard-build steps (00–02, 04) do not require it.
