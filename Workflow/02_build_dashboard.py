@@ -616,36 +616,40 @@ def add_river_layer(fig, resolution="50m", max_scalerank=6):
 def hover_text(record, args):
     metric = args.metric
 
-    best_metric = record.get("best_metric")
-    best_expver = record.get("best_expver")
-    metric_difference = record.get("metric_difference")
+    station_name = record.get("name", "Station") or "Station"
+    country = record.get("country_code", "") or ""
+    river = record.get("river", "") or ""
 
-    metric_text = "NA" if best_metric is None else f"{best_metric:.3f}"
-    diff_text = "NA" if metric_difference is None else f"{metric_difference:+.3f}"
+    values_by_exp = []
 
-    run_bits = []
     for expver in args.expver:
         run = record["runs"].get(expver)
+
         if not run:
-            run_bits.append(f"{expver}: no station")
             continue
 
-        v = run.get(metric)
-        run_bits.append(f"{expver}: NA" if v is None else f"{expver}: {v}")
+        value = safe_float(run.get(metric))
 
-    text = (
-        f"{record.get('name', 'Station')}"
-        f"<br>Country: {record.get('country_code', '')}"
-        f"<br>River: {record.get('river', '')}"
-        f"<br>Best {metric}: {metric_text}"
-        f"<br>Best experiment: {best_expver}"
-        f"<br>{metric} by experiment: {'; '.join(run_bits)}"
+        if value is not None:
+            values_by_exp.append((expver, value))
+
+    if values_by_exp:
+        best_expver, best_value = max(values_by_exp, key=lambda x: x[1])
+        worst_expver, worst_value = min(values_by_exp, key=lambda x: x[1])
+
+        best_line = f"Best: {best_expver}, {metric}: {best_value:.3f}"
+        worst_line = f"Worst: {worst_expver}, {metric}: {worst_value:.3f}"
+
+    else:
+        best_line = f"Best: NA, {metric}: NA"
+        worst_line = f"Worst: NA, {metric}: NA"
+
+    return (
+        f"{station_name} ({country})"
+        f"<br>{river}"
+        f"<br>{best_line}"
+        f"<br>{worst_line}"
     )
-
-    if len(args.expver) >= 2:
-        text += f"<br>Difference ({args.expver[1]} - {args.expver[0]}): {diff_text}"
-
-    return text
 
 
 def add_marker_trace(fig, records, indices, name, color, size, opacity, args):
@@ -892,6 +896,10 @@ html, body {
   overflow: visible;
 }
 
+#main-top {
+  display: block;
+}
+
 #top-toolbar {
   display: flex;
   align-items: center;
@@ -956,7 +964,7 @@ html, body {
 }
 
 #map-wrap {
-  flex: 0 0 __MAP_HEIGHT_VH__vh;
+  flex: none;
   height: __MAP_HEIGHT_VH__vh;
   min-height: 420px;
   overflow: hidden;
@@ -1018,6 +1026,36 @@ html, body {
   width: 100%;
   height: 245px;
   min-height: 220px;
+}
+
+@media (min-width: 1200px) and (orientation: landscape) {
+  #main-top {
+    display: grid;
+    grid-template-columns: minmax(0, 2.35fr) minmax(340px, 1fr);
+    align-items: stretch;
+    border-bottom: 1px solid #ccc;
+  }
+
+  #map-wrap {
+    min-height: 420px;
+  }
+
+  #ecdf-wrap {
+    display: flex;
+    flex-direction: column;
+    border-top: none;
+    border-bottom: none;
+    border-left: 1px solid #ccc;
+    height: __MAP_HEIGHT_VH__vh;
+    min-height: 420px;
+    padding-bottom: 10px;
+  }
+
+  #ecdf-plot {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 240px;
+  }
 }
 
 #bottom {
@@ -1120,6 +1158,10 @@ th, td {
     max-width: 100%;
     min-width: 0;
   }
+
+  #main-top {
+    display: block;
+  }
 }
 </style>
 </head>
@@ -1144,21 +1186,23 @@ th, td {
 
   <div id="transport-warning" class="warning"></div>
 
-  <div id="map-wrap">
-    __MAP_DIV__
-  </div>
-
-  <div id="ecdf-wrap">
-    <div id="ecdf-toolbar">
-      <span class="toolbar-title">Visible-extent empirical CDF</span>
-      <span id="ecdf-exp-select"></span>
-      <label>
-        <input id="ecdf-common-checkbox" type="checkbox">
-        Use common stations
-      </label>
+  <div id="main-top">
+    <div id="map-wrap">
+      __MAP_DIV__
     </div>
-    <div id="ecdf-diagnostics" class="small">Initialising eCDF panel...</div>
-    <div id="ecdf-plot"></div>
+
+    <div id="ecdf-wrap">
+      <div id="ecdf-toolbar">
+        <span class="toolbar-title">Visible-extent empirical CDF</span>
+        <span id="ecdf-exp-select"></span>
+        <label>
+          <input id="ecdf-common-checkbox" type="checkbox">
+          Use common stations
+        </label>
+      </div>
+      <div id="ecdf-diagnostics" class="small">Initialising eCDF panel...</div>
+      <div id="ecdf-plot"></div>
+    </div>
   </div>
 
   <div id="bottom">
