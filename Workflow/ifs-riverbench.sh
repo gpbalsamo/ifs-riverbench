@@ -58,8 +58,8 @@ MARS_TMPDIR="/perm/${USER}/flood_cases/tmp_mars"
 # (/perm/pad/flood_cases/Stations/allstations_v1.3.csv).
 STATION_FILE="/perm/${USER}/flood_cases/Stations/allstations_v1.3.csv"
 
-ARCHIVE_LAYOUT="daily_steps"
-MARS_STEP_TEXT="24"
+# ARCHIVE_LAYOUT="daily_steps"
+# MARS_STEP_TEXT="24"
 ARCHIVE_LAYOUT="monthly_steps"
 MARS_STEP_TEXT=""
 
@@ -89,7 +89,7 @@ GLOFAS_SHORTNAMES=("dis24" "avg_dis")
 
 # Reference experiment for pairwise difference dashboards.
 # REFERENCE_EXPVER="iwya"
-REFERENCE_EXPVER="izay"
+# REFERENCE_EXPVER="izay"
 REFERENCE_EXPVER="iyp3"
 
 METRICS=("kge" "correlation")
@@ -214,6 +214,7 @@ for EXPVER in "${MARS_EXPERIMENTS[@]}"; do
     --date-end "${DATE_END}" \
     --resolution "${RESOLUTION}" \
     --valid-time-shift-hours "${VALID_TIME_SHIFT_HOURS}" \
+    --station-file "${STATION_FILE}" \
     --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 done
 else
