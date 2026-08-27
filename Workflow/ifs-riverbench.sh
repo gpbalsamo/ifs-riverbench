@@ -71,12 +71,12 @@ VALID_TIME_SHIFT_HOURS=-24
 # Experiments produced from MARS/CaMa workflow
 MARS_EXPERIMENTS=(
 #  "j6ft"   # MSWEP3 hourly precipitation
-  "j6fu"   # MSWEP3 daily precipitation
+#  "j6fu"   # MSWEP3 daily precipitation
 #  "j6fs"   # MSWEP3 monthly precipitation
-  "j6gq"   # EFAS 6-hourly precipitation
-  "iyp3"   # 50r1 bugfix ERA5 control
-  "j7xs"   # 50r1 GP4HYDRO
-#  "iwya"   # 50r1 ERA5 control
+#  "j6gq"   # EFAS 6-hourly precipitation
+  "iyp3"   # 50r1 ERA5 new runoff
+#  "j7xs"   # 50r1 GP4HYDRO
+  "iwya"   # 50r1 ERA5 control
 )
 
 # GloFAS experiments from local GRIB files (not retrieved from MARS here)
@@ -88,9 +88,9 @@ GLOFAS_V5_PATTERN="glofas_v5.0_ecmf-era5_*.grib"
 GLOFAS_SHORTNAMES=("dis24" "avg_dis")
 
 # Reference experiment for pairwise difference dashboards.
-# REFERENCE_EXPVER="iwya"
+REFERENCE_EXPVER="iwya"
 # REFERENCE_EXPVER="izay"
-REFERENCE_EXPVER="iyp3"
+# REFERENCE_EXPVER="iyp3"
 
 METRICS=("kge" "correlation")
 
@@ -356,7 +356,7 @@ echo "------------------------------------------------------------------"
 echo "Preparing single-site bundle directory"
 echo "------------------------------------------------------------------"
 
-python3 04_prepare_sites_bundle.py \
+python3 03_prepare_sites_bundle.py \
   --workflow-dir "${SCRIPT_DIR}" \
   --bundle-dirname "${SITE_BUNDLE_DIRNAME}" \
   --html-pattern "global_station_dashboard_*.html"
@@ -378,12 +378,14 @@ echo "Generated HTML dashboards and index in single upload directory:"
 echo "  ${SCRIPT_DIR}/${SITE_BUNDLE_DIRNAME}"
 echo
 echo "To view dashboards on sites, run:"
-echo '  export ECMWF_SITES_TOKEN="<set securely outside Git>"'
+echo '  export ECMWF_RIVERBENCH_TOKEN="<set securely outside Git>"'
 
-echo "  python3 03_upload_dashboard.py \
-  --workflow-dir /perm/${USER}/ifs-riverbench/Workflow/${SITE_BUNDLE_DIRNAME}"
+echo "  python3 04_upload_dashboard.py \
+  --workflow-dir /perm/${USER}/ifs-riverbench/Workflow \
+  --dashboard-dirname ${SITE_BUNDLE_DIRNAME} \
+  --remote-dashboard-dir discharge-dashboard"
 
 echo
 echo "Then open the generated HTML files through:"
-echo "  https://sites.ecmwf.int/${USER}/riverbench/"
+echo "  https://sites.ecmwf.int/${USER}/riverbench/discharge-dashboard/"
 echo "======================================================================"

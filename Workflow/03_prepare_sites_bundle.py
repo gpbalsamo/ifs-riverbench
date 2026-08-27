@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-04_prepare_sites_bundle.py
+03_prepare_sites_bundle.py
 
 Create a single deployable directory containing:
 - all generated dashboard HTML files
@@ -135,33 +135,55 @@ def build_index(dashboard_files):
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <title>IFS Riverbench Dashboards</title>
 <style>
-:root {{
-  --bg: #f7f8fb;
-  --panel: #ffffff;
-  --ink: #152033;
-  --sub: #4b6078;
-  --line: #d8e0ea;
-  --accent: #0b6cff;
+body {{
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f7f7f7;
+  color: #1f2937;
 }}
-html, body {{ margin: 0; padding: 0; background: var(--bg); color: var(--ink); font-family: Arial, sans-serif; }}
-main {{ max-width: 1200px; margin: 24px auto; padding: 0 16px; }}
-.card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }}
-h1 {{ margin: 0 0 8px; font-size: 24px; }}
-p {{ margin: 4px 0 16px; color: var(--sub); }}
+header {{
+  padding: 12px 20px;
+  background: #1f2937;
+  color: white;
+}}
+header h1 {{
+  margin: 0;
+  font-size: 22px;
+}}
+header p {{
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: #cbd5e1;
+}}
+main {{
+  max-width: 1200px;
+  margin: 40px auto;
+  padding: 0 20px;
+}}
+.card {{
+  background: white;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}}
 .table-wrap {{ overflow-x: auto; }}
 table {{ border-collapse: collapse; width: 100%; background: #fff; }}
-th, td {{ border-bottom: 1px solid var(--line); padding: 10px 8px; text-align: left; vertical-align: top; font-size: 14px; }}
-th {{ font-size: 12px; color: var(--sub); text-transform: uppercase; letter-spacing: 0.04em; }}
-a {{ color: var(--accent); text-decoration: none; }}
+th, td {{ border-bottom: 1px solid #ccc; padding: 10px 8px; text-align: left; vertical-align: top; font-size: 14px; }}
+th {{ font-size: 12px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.04em; }}
+a {{ color: #1f2937; font-weight: bold; text-decoration: none; }}
 a:hover {{ text-decoration: underline; }}
-.badge {{ display:inline-block; padding:2px 7px; border:1px solid var(--line); border-radius:999px; font-size:12px; background:#f0f5ff; }}
+.badge {{ display:inline-block; padding:2px 7px; border:1px solid #ccc; border-radius:999px; font-size:12px; background:#f3f4f6; color: #4b5563; }}
 </style>
 </head>
 <body>
+<header>
+  <h1>IFS Riverbench Dashboards</h1>
+  <p>River discharge model experiments vs. observations, by station</p>
+</header>
+
 <main>
   <div class=\"card\">
-    <h1>IFS Riverbench Dashboard Index</h1>
-    <p>Single entry page for all generated dashboard variants and metrics.</p>
     <p><span class=\"badge\">Tip</span> Open dashboards through a web server or Sites for full station hydrograph loading.</p>
     <div class=\"table-wrap\">
       <table>

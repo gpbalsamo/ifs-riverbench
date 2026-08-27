@@ -45,8 +45,8 @@ This creates station data under `dashboard_data/` and HTML dashboards in `site_b
 ### 5) Upload dashboards on sites (optional)
 
 ```bash
-export ECMWF_SITES_TOKEN="<set securely outside Git>"
-python3 03_upload_dashboard.py --workflow-dir /perm/$USER/ifs-riverbench/Workflow/site_bundle
+export ECMWF_RIVERBENCH_TOKEN="<set securely outside Git>"
+python3 04_upload_dashboard.py --workflow-dir /perm/$USER/ifs-riverbench/Workflow --dashboard-dirname site_bundle
 ```
 
 ## What each script does
@@ -59,8 +59,8 @@ Workflow/
 ├── 00_extract_rivers_mars.py       # retrieve river discharge GRIB files from MARS
 ├── 01_extract_hydrographs.py       # extract station hydrographs and compute metrics
 ├── 02_build_dashboard.py           # create interactive HTML dashboards
-├── 03_upload_dashboard.py          # upload generated dashboards to ECMWF Sites
-├── 04_prepare_sites_bundle.py      # prepare a single directory to upload
+├── 03_prepare_sites_bundle.py      # prepare a single directory to upload
+├── 04_upload_dashboard.py          # upload generated dashboards to ECMWF Sites
 ├── benchmark_cmf_vs_glofas5.py     # dedicated CaMa-Flood vs GloFAS benchmark engine
 ├── benchmark_cmf_vs_glofas5.sh     # launcher for the long-period benchmark
 ├── build_benchmark_html_index.py   # build HTML index pages for benchmark plots
@@ -326,43 +326,36 @@ Edit the settings at the top of `ifs-riverbench.sh` to change the experiment lis
 
 ## Upload dashboards to ECMWF Sites
 
-Set your ECMWF Sites token:
+Set your ECMWF Sites token (e.g. in `~/.profile`):
 
 ```bash
-export ECMWF_SITES_TOKEN="<set securely outside Git>"
+export ECMWF_RIVERBENCH_TOKEN="<set securely outside Git>"
 ```
 
-Upload all HTML files and `dashboard_data/`:
+Upload the whole bundle directory (HTML dashboards, index page, and `dashboard_data/`) recursively:
 
 ```bash
-python3 03_upload_dashboard.py
-```
-
-Upload only HTML files:
-
-```bash
-python3 03_upload_dashboard.py --html-only
+python3 04_upload_dashboard.py
 ```
 
 Dry run:
 
 ```bash
-python3 03_upload_dashboard.py --dry-run
+python3 04_upload_dashboard.py --dry-run
 ```
 
 Useful options:
 
 ```text
---workflow-dir                 directory containing dashboard HTML and dashboard_data
---html-pattern                 glob pattern for HTML files
---html-only                    upload only HTML files
---skip-dashboard-data          skip dashboard_data upload
+--workflow-dir                 directory containing the dashboard bundle directory
+--dashboard-dirname            name of the bundle directory to upload (default: site_bundle)
+--remote-dashboard-dir         remote path to upload into (default: discharge-dashboard)
 --list-before                  list remote files before upload
 --list-after                   list remote files after upload
 --dry-run                      print actions without uploading
 ```
 
-The upload script reads the token from the `ECMWF_SITES_TOKEN` environment variable. Do not hard-code API tokens in the repository.
+The upload script reads the token from the `ECMWF_RIVERBENCH_TOKEN` environment variable. Do not hard-code API tokens in the repository.
 
 ## Viewing dashboards locally
 
@@ -412,10 +405,10 @@ cartopy
 zarr
 ```
 
-The upload step additionally requires the ECMWF Sites SDK:
+The upload step additionally requires the `sitesctl` CLI (not a pip package):
 
-```text
-sites.sdk
+```bash
+module load sites
 ```
 
 ## Notes
@@ -454,8 +447,8 @@ Notes:
 
 - The environment is named `ifs-riverbench` (change the `name:` field in
   `environment.yml` to install it under a different name).
-- The ECMWF Sites SDK (`sites`), required only by `03_upload_dashboard.py`, is
-  **not** on public PyPI and is therefore commented out in `environment.yml`.
-  If you need the dashboard upload step, install it separately into the active
-  environment (e.g. `pip install sites` from ECMWF's internal package index).
+- `04_upload_dashboard.py` shells out to the `sitesctl` CLI rather than a pip
+  package: the `sites` package on public PyPI is an unrelated third-party
+  package, not ECMWF's Sites tool. On ECMWF HPC, run `module load sites`
+  before the upload step.
   The extraction and dashboard-build steps (00–02, 04) do not require it.

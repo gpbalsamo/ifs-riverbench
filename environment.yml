@@ -214,12 +214,10 @@ dependencies:
       - requests==2.34.2
       - scipy==1.18.0
       - shapely==2.1.2
-      # 'sites' is the ECMWF-internal Sites SDK, required only by
-      # 03_upload_dashboard.py (dashboard upload to sites.ecmwf.int).
-      # It is not on public PyPI. Install it separately if you need the
-      # upload step, e.g. from ECMWF's internal package index:
-      #   pip install sites
-      # - sites==0.0.1
+      # The dashboard upload step (04_upload_dashboard.py) needs the `sitesctl`
+      # CLI, not a pip package: "sites" on public PyPI is an unrelated
+      # third-party package, not ECMWF's Sites tool. On ECMWF HPC, get it via:
+      #   module load sites
       - six==1.17.0
       - toolz==1.1.0
       - typing-extensions==4.16.0

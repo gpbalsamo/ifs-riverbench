@@ -2,9 +2,10 @@
 # Generated dashboard outputs
 dashboard_data/
 global_station_dashboard_*.html
+site_bundle/
 
 # Local/cache outputs
 *.zarr/
 *.npz
 __pycache__/
-03_upload_dashboard.sh
+04_upload_dashboard.sh
