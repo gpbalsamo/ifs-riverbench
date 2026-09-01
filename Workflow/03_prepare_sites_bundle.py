@@ -10,6 +10,7 @@ Create a single deployable directory containing:
 
 from pathlib import Path
 import argparse
+import json
 import shutil
 import re
 import os
@@ -79,54 +80,89 @@ def parse_dashboard_filename(name: str):
     return m.groupdict()
 
 
-def human_mode(mode: str) -> str:
-    if mode == "best_metric":
-        return "Best Metric"
-    if mode == "best_experiment":
-        return "Best Experiment"
-    if mode == "experiment_difference":
-        return "Experiment Difference"
-    return mode
+def split_expvers(blob, known_expvers):
+    """Split an underscore-joined expver blob (e.g. "iwya_glofas_v5") back
+    into individual experiment names, by greedily matching the longest
+    known expver name at each position. A plain blob.split("_") breaks as
+    soon as any expver name itself contains an underscore (e.g. glofas_v5),
+    which is exactly the case here."""
+    names = sorted(known_expvers, key=len, reverse=True)
+    result = []
+    rest = blob
+    while rest:
+        for name in names:
+            if rest == name or rest.startswith(name + "_"):
+                result.append(name)
+                rest = rest[len(name):].lstrip("_")
+                break
+        else:
+            # Unrecognised remainder: fall back to a single raw token so
+            # nothing is silently dropped.
+            result.append(rest)
+            break
+    return result
 
 
-def build_index(dashboard_files):
-    rows = []
+def build_index(dashboard_files, known_expvers):
+    """Single-page dashboard switchboard: metric/view buttons (and, for
+    experiment_difference, a comparison-pair selector) swap which existing
+    dashboard file is shown in an embedded frame, rather than merging all
+    dashboards' data into one page (that would multiply an already-heavy
+    ~15-18MB file by 8)."""
+    entries = []
     for f in sorted(dashboard_files, key=lambda x: x.name):
         meta = parse_dashboard_filename(f.name)
         if meta is None:
-            metric = "unknown"
-            mode = "other"
-            run = "-"
-            experiments = "-"
-        else:
-            metric = meta["metric"]
-            mode = meta["mode"]
-            run = f"{meta['start']} to {meta['end']} ({meta['res']})"
-            experiments = meta["expvers"].replace("_", ", ")
-
-        rows.append(
+            continue
+        expvers = split_expvers(meta["expvers"], known_expvers)
+        entries.append(
             {
                 "file": f.name,
-                "metric": metric,
-                "mode": human_mode(mode),
-                "run": run,
-                "experiments": experiments,
+                "metric": meta["metric"],
+                "mode": meta["mode"],
+                "expvers": expvers,
             }
         )
 
-    lines = []
-    for r in rows:
-        lines.append(
-            "<tr>"
-            f"<td><a href=\"{r['file']}\">{r['file']}</a></td>"
-            f"<td>{r['metric']}</td>"
-            f"<td>{r['mode']}</td>"
-            f"<td>{r['run']}</td>"
-            f"<td>{r['experiments']}</td>"
-            "</tr>"
-        )
+    metrics = sorted({e["metric"] for e in entries})
+    modes = [m for m in ("best_metric", "best_experiment", "experiment_difference") if any(e["mode"] == m for e in entries)]
 
-    table_rows = "\n".join(lines)
+    # dashboards[metric][mode] = filename, for best_metric/best_experiment.
+    # dashboards[metric]["experiment_difference"][pair_key] = filename, and
+    # pairs[pair_key] = human label, for experiment_difference.
+    dashboards = {m: {} for m in metrics}
+    pairs = {}
+    for e in entries:
+        if e["mode"] == "experiment_difference":
+            ref, target = e["expvers"][0], e["expvers"][-1]
+            pair_key = f"{target}_vs_{ref}"
+            pairs[pair_key] = f"{target} vs {ref}"
+            dashboards[e["metric"]].setdefault("experiment_difference", {})[pair_key] = e["file"]
+        else:
+            dashboards[e["metric"]][e["mode"]] = e["file"]
+
+    dashboards_json = json.dumps(dashboards)
+    # Put GloFAS comparisons last: it's an external reference product, not
+    # an IFS experiment, so an IFS-vs-IFS comparison is the more useful
+    # default when one exists (plain alphabetical sorts "glofas_v5" first).
+    pair_order = sorted(pairs, key=lambda k: ("glofas" in k, k))
+    pairs_json = json.dumps([{"key": k, "label": pairs[k]} for k in pair_order])
+
+    default_metric = "kge" if "kge" in metrics else metrics[0]
+    default_mode = "experiment_difference" if "experiment_difference" in modes else modes[0]
+    default_pair = pair_order[0] if pair_order else None
+
+    mode_labels = {"best_metric": "Best metric", "best_experiment": "Best experiment", "experiment_difference": "Difference"}
+    metric_buttons = "\n".join(
+        f'<button class="ctrl-btn metric-btn" data-metric="{m}">{m.upper() if m == "kge" else m.capitalize()}</button>'
+        for m in metrics
+    )
+    mode_buttons = "\n".join(
+        f'<button class="ctrl-btn mode-btn" data-mode="{m}">{mode_labels.get(m, m)}</button>' for m in modes
+    )
+    pair_buttons = "\n".join(
+        f'<button class="ctrl-btn pair-btn" data-pair="{k}">{pairs[k]}</button>' for k in pair_order
+    )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -135,45 +171,56 @@ def build_index(dashboard_files):
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <title>IFS Riverbench Dashboards</title>
 <style>
-body {{
+html, body {{
   margin: 0;
+  height: 100%;
   font-family: Arial, sans-serif;
   background: #f7f7f7;
   color: #1f2937;
 }}
 header {{
-  padding: 12px 20px;
+  padding: 10px 20px;
   background: #1f2937;
   color: white;
 }}
 header h1 {{
   margin: 0;
-  font-size: 22px;
+  font-size: 20px;
 }}
 header p {{
-  margin: 4px 0 0;
-  font-size: 14px;
+  margin: 2px 0 0;
+  font-size: 13px;
   color: #cbd5e1;
 }}
-main {{
-  max-width: 1200px;
-  margin: 40px auto;
-  padding: 0 20px;
-}}
-.card {{
+#controls {{
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 10px 20px;
   background: white;
-  border: 1px solid #ccc;
-  border-radius: 6px;
-  padding: 18px 20px;
-  margin-bottom: 16px;
+  border-bottom: 1px solid #ccc;
 }}
-.table-wrap {{ overflow-x: auto; }}
-table {{ border-collapse: collapse; width: 100%; background: #fff; }}
-th, td {{ border-bottom: 1px solid #ccc; padding: 10px 8px; text-align: left; vertical-align: top; font-size: 14px; }}
-th {{ font-size: 12px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.04em; }}
-a {{ color: #1f2937; font-weight: bold; text-decoration: none; }}
-a:hover {{ text-decoration: underline; }}
-.badge {{ display:inline-block; padding:2px 7px; border:1px solid #ccc; border-radius:999px; font-size:12px; background:#f3f4f6; color: #4b5563; }}
+.ctrl-group {{ display: flex; align-items: center; gap: 6px; }}
+.ctrl-label {{ font-size: 12px; color: #4b5563; text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px; }}
+.ctrl-btn {{
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  background: #f3f4f6;
+  color: #4b5563;
+  cursor: pointer;
+}}
+.ctrl-btn.active {{ background: #1f2937; color: #fff; border-color: #1f2937; }}
+#pair-group {{ display: none; }}
+#open-new-tab {{ margin-left: auto; font-size: 13px; color: #1f2937; font-weight: bold; text-decoration: none; }}
+#open-new-tab:hover {{ text-decoration: underline; }}
+#frame-wrap {{ position: absolute; top: 96px; bottom: 0; left: 0; right: 0; }}
+iframe {{ width: 100%; height: 100%; border: none; }}
+@media (max-width: 900px) {{
+  #frame-wrap {{ top: 132px; }}
+}}
 </style>
 </head>
 <body>
@@ -181,28 +228,64 @@ a:hover {{ text-decoration: underline; }}
   <h1>IFS Riverbench Dashboards</h1>
   <p>River discharge model experiments vs. observations, by station</p>
 </header>
-
-<main>
-  <div class=\"card\">
-    <p><span class=\"badge\">Tip</span> Open dashboards through a web server or Sites for full station hydrograph loading.</p>
-    <div class=\"table-wrap\">
-      <table>
-        <thead>
-          <tr>
-            <th>Dashboard</th>
-            <th>Metric</th>
-            <th>Mode</th>
-            <th>Run</th>
-            <th>Experiments</th>
-          </tr>
-        </thead>
-        <tbody>
-          {table_rows}
-        </tbody>
-      </table>
-    </div>
+<div id=\"controls\">
+  <div class=\"ctrl-group\">
+    <span class=\"ctrl-label\">Metric</span>
+    {metric_buttons}
   </div>
-</main>
+  <div class=\"ctrl-group\">
+    <span class=\"ctrl-label\">View</span>
+    {mode_buttons}
+  </div>
+  <div class=\"ctrl-group\" id=\"pair-group\">
+    <span class=\"ctrl-label\">Comparison</span>
+    {pair_buttons}
+  </div>
+  <a id=\"open-new-tab\" href=\"#\" target=\"_blank\">Open in new tab &#8599;</a>
+</div>
+<div id=\"frame-wrap\">
+  <iframe id=\"dashboard-frame\" title=\"Dashboard\"></iframe>
+</div>
+<script>
+const DASHBOARDS = {dashboards_json};
+const PAIRS = {pairs_json};
+
+let state = {{
+  metric: "{default_metric}",
+  mode: "{default_mode}",
+  pair: {f'"{default_pair}"' if default_pair else "null"}
+}};
+
+function currentFile() {{
+  const byMode = DASHBOARDS[state.metric] || {{}};
+  if (state.mode === "experiment_difference") {{
+    const byPair = byMode.experiment_difference || {{}};
+    return byPair[state.pair] || null;
+  }}
+  return byMode[state.mode] || null;
+}}
+
+function render() {{
+  document.querySelectorAll(".metric-btn").forEach(b => b.classList.toggle("active", b.dataset.metric === state.metric));
+  document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.mode === state.mode));
+  document.querySelectorAll(".pair-btn").forEach(b => b.classList.toggle("active", b.dataset.pair === state.pair));
+  document.getElementById("pair-group").style.display = state.mode === "experiment_difference" ? "flex" : "none";
+
+  const file = currentFile();
+  const frame = document.getElementById("dashboard-frame");
+  const link = document.getElementById("open-new-tab");
+  if (file) {{
+    if (frame.getAttribute("src") !== file) frame.setAttribute("src", file);
+    link.setAttribute("href", file);
+  }}
+}}
+
+document.querySelectorAll(".metric-btn").forEach(b => b.addEventListener("click", () => {{ state.metric = b.dataset.metric; render(); }}));
+document.querySelectorAll(".mode-btn").forEach(b => b.addEventListener("click", () => {{ state.mode = b.dataset.mode; render(); }}));
+document.querySelectorAll(".pair-btn").forEach(b => b.addEventListener("click", () => {{ state.pair = b.dataset.pair; render(); }}));
+
+render();
+</script>
 </body>
 </html>
 """
@@ -317,7 +400,8 @@ def main():
         bundle_dashboard_data = bundle_dir / "dashboard_data"
         copied_files, skipped_files = copy_tree_merge(dashboard_data, bundle_dashboard_data)
 
-    index_html = build_index(dashboard_files)
+    known_expvers = sorted(p.name for p in dashboard_data.iterdir() if p.is_dir())
+    index_html = build_index(dashboard_files, known_expvers)
     (bundle_dir / "index.html").write_text(index_html, encoding="utf-8")
 
     print(f"Prepared bundle: {bundle_dir}")
