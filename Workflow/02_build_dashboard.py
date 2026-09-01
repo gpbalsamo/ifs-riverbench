@@ -52,11 +52,13 @@ View the output through a web server, for example:
 """
 
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import argparse
 import json
 
 import numpy as np
 import plotly.graph_objects as go
+import xarray as xr
 
 import cartopy.io.shapereader as shpreader
 
@@ -65,6 +67,14 @@ import cartopy.io.shapereader as shpreader
 # Defaults
 # ------------------------------------------------------------
 DEFAULT_DATA_ROOT = Path("dashboard_data")
+
+# CaMa-Flood static river network (nextx/nexty flow direction, lonp/latp
+# reach endpoints, uparea drainage area) used by add_reach_layers() to draw
+# river reaches on the experiment_difference map, colour-matched to the same
+# difference_class_config() classes used for the station markers. One
+# directory per --resolution (arcmin); see 01_extract_hydrographs.py's
+# Cama1/Cama3/Cama6/Cama15 station columns for the matching convention.
+CAMA_NETWORK_ROOT = Path("/home/rdx/data/50r1/camaflood/static_network_nc_v2.1")
 
 VALID_METRICS = ["kge", "correlation"]
 VALID_COLOUR_MODES = [
@@ -234,6 +244,16 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--no-reach-network",
+        action="store_true",
+        help=(
+            "Skip the CaMa-Flood river reach network layer normally added to "
+            "experiment_difference dashboards (coloured by the same metric-"
+            "difference classes as the station markers)."
+        ),
+    )
+
+    parser.add_argument(
         "--warn-scale-ratio-low",
         type=float,
         default=0.2,
@@ -359,6 +379,8 @@ def merge_catalogues(data_root, expvers, label, metric, control_expver=None):
                     "lat": station.get("lat"),
                     "model_lon": station.get("model_lon"),
                     "model_lat": station.get("model_lat"),
+                    "model_row": station.get("model_row"),
+                    "model_col": station.get("model_col"),
                     "distance_station_to_model_km": station.get(
                         "distance_station_to_model_km"
                     ),
@@ -613,6 +635,484 @@ def add_river_layer(fig, resolution="50m", max_scalerank=6):
     print(f"Added river layer: {n_rivers:,} river segments", flush=True)
 
 
+# ------------------------------------------------------------
+# River reach network (experiment_difference colour mode only)
+#
+# Draws the CaMa-Flood river network itself, coloured by the same
+# difference_class_config() classes used for the station markers, so a
+# pairwise experiment comparison can be seen propagating along the network
+# rather than only at isolated gauge points. Built directly from the
+# CaMa-Flood static network (nextx/nexty give the flow graph, lonp/latp the
+# reach endpoints, uparea the drainage area) -- no extra hydrography
+# download needed, and it lines up exactly with the same grid stations are
+# already colocated to via model_row/model_col.
+# ------------------------------------------------------------
+
+# Upstream-area tiers (km2) -> line width, so the main stem stands out from
+# small tributaries at a glance.
+REACH_WIDTH_BOUNDS = [0, 2000, 20000, 150000, float("inf")]
+REACH_WIDTH_VALUES = [1.0, 2.0, 3.5, 6.0]
+
+# Above this many network cells, per-point hover text (repeated per vertex)
+# dominates page size for little benefit -- that many overlapping reaches
+# can't be usefully aimed at when zoomed out anyway. Small basin-scoped
+# extents keep exact per-reach hover values.
+MAX_REACH_HOVER_CELLS = 20000
+
+
+def reach_width_for_uparea(uparea_km2):
+    for i in range(len(REACH_WIDTH_BOUNDS) - 1):
+        if REACH_WIDTH_BOUNDS[i] <= uparea_km2 < REACH_WIDTH_BOUNDS[i + 1]:
+            return REACH_WIDTH_VALUES[i]
+    return REACH_WIDTH_VALUES[-1]
+
+
+def load_cama_network(resolution):
+    path = CAMA_NETWORK_ROOT / f"glb_{int(resolution):02d}min" / "ncdata.nc"
+    ds = xr.open_dataset(path)
+    return {
+        "basin": ds.basin.values,
+        "nextx": ds.nextx.values,
+        "nexty": ds.nexty.values,
+        "lonp": ds.lonp.values,
+        "latp": ds.latp.values,
+        "uparea": ds.uparea.values,
+    }
+
+
+def attribute_downstream_value(cells, downstream_of, station_values):
+    """For every network cell, find the value of the nearest gauge at or
+    downstream of it (a diff, a mean discharge, whatever station_values
+    holds) by following the flow graph. Iterative with path compression so
+    it works for arbitrarily long rivers without recursion limits, and
+    bails out safely if the network ever contains a cycle."""
+    resolved = {}
+    n_cells = len(cells)
+
+    for start in cells:
+        if start in resolved:
+            continue
+        path = []
+        cur = start
+        steps = 0
+        result = None
+        while True:
+            steps += 1
+            if steps > n_cells + 1:
+                result = None
+                break
+            if cur in resolved:
+                result = resolved[cur]
+                break
+            if cur in station_values:
+                result = station_values[cur]
+                break
+            d = downstream_of.get(cur)
+            if d is None:
+                result = None
+                break
+            path.append(cur)
+            cur = d
+        for node in path:
+            resolved[node] = result
+        resolved[start] = result
+    return resolved
+
+
+def compute_network_topology(net, mask):
+    """Purely topological (diff-independent) network structure: for every
+    masked cell, its downstream neighbour (if still inside the mask), how
+    many masked cells flow into it, and -- when exactly one does -- which
+    one."""
+    nextx, nexty = net["nextx"], net["nexty"]
+    rows, cols = np.where(mask)
+    cells = list(zip(rows.tolist(), cols.tolist()))
+    cell_set = set(cells)
+
+    downstream_of = {}
+    indegree = {rc: 0 for rc in cells}
+    predecessor = {}
+    for rc in cells:
+        r, c = rc
+        nx, ny = nextx[r, c], nexty[r, c]
+        d = None
+        if nx > 0 and ny > 0:
+            cand = (int(ny) - 1, int(nx) - 1)
+            if cand in cell_set:
+                d = cand
+        downstream_of[rc] = d
+        if d is not None:
+            indegree[d] = indegree.get(d, 0) + 1
+            predecessor[d] = rc
+    return cells, downstream_of, indegree, predecessor
+
+
+def build_reach_chains(cells, downstream_of, indegree, predecessor, cell_key_fn):
+    """Merge consecutive single-inflow cells sharing the same (color, width)
+    key into one long chain, instead of treating every cell->downstream
+    edge as its own two-point line. A dash-based "flowing" animation (see
+    the HTML template) restarts its pattern at every SVG subpath, so a page
+    built from thousands of tiny two-point subpaths just flickers instead
+    of appearing to flow -- merging same-styled runs into long subpaths is
+    what makes the dash pattern actually travel visibly once zoomed in.
+
+    A chain starts at a headwater (indegree 0), a confluence (indegree > 1,
+    since multiple inflows can't share one subpath), or wherever the key
+    changes from the single predecessor's; it ends at the next such
+    boundary (inclusive, so consecutive chains still share a vertex)."""
+
+    def is_start(rc):
+        if indegree.get(rc, 0) != 1:
+            return True
+        pred = predecessor.get(rc)
+        return cell_key_fn(pred) != cell_key_fn(rc)
+
+    chains = []
+    for rc in cells:
+        if not is_start(rc):
+            continue
+        key = cell_key_fn(rc)
+        chain_cells = [rc]
+        cur = rc
+        while True:
+            d = downstream_of[cur]
+            if d is None:
+                break
+            chain_cells.append(d)
+            if indegree.get(d, 0) == 1 and cell_key_fn(d) == key:
+                cur = d
+                continue
+            break
+        chains.append((key, chain_cells))
+    return chains
+
+
+def add_reach_layers(fig, records, args):
+    """Add river-reach lines coloured by the same difference classes as the
+    station markers. Only meaningful for experiment_difference (a pairwise
+    diff), and only for stations whose model_row/model_col reference this
+    resolution's CaMa-Flood grid -- e.g. GloFAS-colocated stations don't and
+    are silently skipped, same as any other station missing the field."""
+    ref_expver = args.expver[0]
+    target_expver = args.expver[1]
+    class_config = {
+        cfg["class"]: cfg
+        for cfg in difference_class_config(args.metric, ref_expver, target_expver, args.difference_threshold)
+    }
+
+    def station_rc(record):
+        r, c = record.get("model_row"), record.get("model_col")
+        if r is None or c is None or r == "" or c == "":
+            return None
+        try:
+            return (int(float(r)), int(float(c)))
+        except (TypeError, ValueError):
+            return None
+
+    net = load_cama_network(args.resolution)
+    basin = net["basin"]
+
+    cell_diffs = {}
+    basin_ids = set()
+    for record in records:
+        rc = station_rc(record)
+        if rc is None:
+            continue
+        diff = record.get("metric_difference")
+        if diff is None:
+            continue
+        basin_ids.add(int(basin[rc]))
+        cell_diffs.setdefault(rc, []).append(diff)
+
+    if not basin_ids:
+        print("Reach network: no stations with both a valid model grid cell and a metric "
+              "difference -- skipping.", flush=True)
+        return
+
+    # Several distinct gauges commonly share one grid cell, but the reach
+    # network graph has only one node per cell, so at most one value per
+    # cell can control reach coloring: average colliding stations' diffs.
+    station_diff = {rc: sum(vals) / len(vals) for rc, vals in cell_diffs.items()}
+
+    mask = np.isin(basin, list(basin_ids))
+    cells, downstream_of, indegree, predecessor = compute_network_topology(net, mask)
+    gauge_diff_by_cell = attribute_downstream_value(cells, downstream_of, station_diff)
+
+    lonp, latp, uparea = net["lonp"], net["latp"], net["uparea"]
+    threshold = float(args.difference_threshold)
+
+    def cell_key(rc):
+        diff = gauge_diff_by_cell.get(rc)
+        cls = difference_class(diff, threshold)
+        color = class_config[cls]["color"]
+        width = reach_width_for_uparea(float(uparea[rc]) / 1e6)
+        return (color, width)
+
+    chains = build_reach_chains(cells, downstream_of, indegree, predecessor, cell_key)
+    with_hover = len(cells) <= MAX_REACH_HOVER_CELLS
+
+    buckets = {}
+    for key, chain_cells in chains:
+        b = buckets.setdefault(key, {"lon": [], "lat": [], "text": []})
+        b["lon"].extend([round(float(lonp[rc]), 4) for rc in chain_cells] + [None])
+        b["lat"].extend([round(float(latp[rc]), 4) for rc in chain_cells] + [None])
+        if with_hover:
+            for rc in chain_cells:
+                diff = gauge_diff_by_cell.get(rc)
+                diff_txt = "n/a (no downstream gauge)" if diff is None else f"{diff:+.3f}"
+                ua = float(uparea[rc]) / 1e6
+                b["text"].append(
+                    f"Upstream area: {ua:.0f} km²<br>"
+                    f"{args.metric} diff, {target_expver} - {ref_expver} "
+                    f"(downstream gauge): {diff_txt}"
+                )
+            b["text"].append(None)
+
+    n_traces = 0
+    for (color, width), b in buckets.items():
+        fig.add_trace(
+            go.Scattergeo(
+                lon=b["lon"],
+                lat=b["lat"],
+                mode="lines",
+                line=dict(color=color, width=width),
+                text=b["text"] if with_hover else None,
+                hoverinfo="text" if with_hover else "skip",
+                showlegend=False,
+            )
+        )
+        n_traces += 1
+
+    print(
+        f"Added reach network: {len(cells):,} cells across {len(basin_ids):,} basins, "
+        f"{n_traces} traces",
+        flush=True,
+    )
+
+
+# ------------------------------------------------------------
+# River reach network coloured by actual discharge (best_metric /
+# best_experiment colour modes -- these have no pairwise diff to colour by,
+# so instead of the difference classes above, colour by each gauge's own
+# mean simulated discharge, propagated downstream the same way.
+# ------------------------------------------------------------
+
+# Sequential (light -> dark blue) rather than diverging, since discharge has
+# no natural "zero-crossing" midpoint the way a difference does.
+DISCHARGE_BIN_COLORS = [
+    "#eff3ff", "#c6dbef", "#9ecae1", "#6baed6", "#4292c6", "#2171b5", "#084594",
+]
+DISCHARGE_NODATA_COLOR = "#cccccc"
+DISCHARGE_COLORSCALE = "Blues"
+
+
+def discharge_bin_index(log_value, lo, hi):
+    edges = np.linspace(lo, hi, len(DISCHARGE_BIN_COLORS) + 1)
+    idx = int(np.searchsorted(edges, log_value, side="right") - 1)
+    return min(max(idx, 0), len(DISCHARGE_BIN_COLORS) - 1)
+
+
+def nice_discharge_ticks(lo, hi, n=5):
+    """n human-friendly discharge values (m3/s), roughly evenly spaced in
+    log space between 10**lo and 10**hi, for the colourbar tick labels."""
+    raw = np.logspace(lo, hi, n)
+    nice = []
+    for v in raw:
+        magnitude = 10 ** np.floor(np.log10(v))
+        for step in (1, 2, 5, 10):
+            candidate = step * magnitude
+            if candidate >= v:
+                nice.append(candidate)
+                break
+        else:
+            nice.append(10 * magnitude)
+    return nice
+
+
+def load_mean_discharge(data_root, expver, label, station_ids):
+    """Mean of each station's daily model_discharge time series (m3/s) for
+    one experiment. Reading ~9,400 per-station JSON files serially takes
+    ~9 minutes on this filesystem (measured), almost entirely I/O wait, so
+    this parallelises the reads and caches the result to disk keyed by
+    station_id -- computed once per experiment and reused across every
+    --metric/--colour-mode dashboard build rather than repeated per build."""
+    stations_dir = Path(data_root) / expver / label / "stations"
+    cache_path = Path(data_root) / expver / label / "mean_discharge_cache.json"
+
+    cache = {}
+    if cache_path.exists():
+        try:
+            cache = json.loads(cache_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            cache = {}
+
+    missing = [sid for sid in station_ids if sid not in cache]
+    if missing:
+        def read_one(sid):
+            try:
+                d = json.loads((stations_dir / f"{sid}.json").read_text())
+            except (OSError, json.JSONDecodeError):
+                return sid, None
+            vals = [v for v in d.get("model_discharge", []) if v is not None]
+            return sid, (sum(vals) / len(vals) if vals else None)
+
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            for sid, mean_value in executor.map(read_one, missing):
+                cache[sid] = mean_value
+
+        try:
+            cache_path.write_text(json.dumps(cache))
+        except OSError:
+            pass
+
+    return {sid: cache.get(sid) for sid in station_ids}
+
+
+def add_discharge_reach_layer(fig, records, args):
+    """Add a river-reach network coloured by actual mean simulated
+    discharge, for colour modes with no pairwise difference to colour by.
+    Each gauge's value comes from whichever experiment was identified as
+    best for that station (record['best_expver']); network cells without a
+    gauge take the value from the nearest downstream one, same technique as
+    add_reach_layers's difference propagation."""
+    label = run_label(args.date_start, args.date_end, args.resolution)
+
+    def station_rc(record):
+        r, c = record.get("model_row"), record.get("model_col")
+        if r is None or c is None or r == "" or c == "":
+            return None
+        try:
+            return (int(float(r)), int(float(c)))
+        except (TypeError, ValueError):
+            return None
+
+    station_ids_by_expver = {}
+    for record in records:
+        rc = station_rc(record)
+        expver = record.get("best_expver")
+        if rc is None or expver is None:
+            continue
+        station_ids_by_expver.setdefault(expver, []).append(record.get("station_id"))
+
+    if not station_ids_by_expver:
+        print("Reach network (discharge): no stations with a valid model grid cell -- skipping.", flush=True)
+        return
+
+    mean_discharge_by_sid = {}
+    for expver, station_ids in station_ids_by_expver.items():
+        mean_discharge_by_sid.update(load_mean_discharge(args.data_root, expver, label, station_ids))
+
+    net = load_cama_network(args.resolution)
+    basin = net["basin"]
+
+    cell_flows = {}
+    basin_ids = set()
+    for record in records:
+        rc = station_rc(record)
+        if rc is None:
+            continue
+        flow = mean_discharge_by_sid.get(record.get("station_id"))
+        if flow is None or flow <= 0:
+            continue
+        basin_ids.add(int(basin[rc]))
+        cell_flows.setdefault(rc, []).append(flow)
+
+    if not basin_ids:
+        print("Reach network (discharge): no valid discharge values -- skipping.", flush=True)
+        return
+
+    station_flow = {rc: sum(vals) / len(vals) for rc, vals in cell_flows.items()}
+
+    mask = np.isin(basin, list(basin_ids))
+    cells, downstream_of, indegree, predecessor = compute_network_topology(net, mask)
+    gauge_flow_by_cell = attribute_downstream_value(cells, downstream_of, station_flow)
+
+    lonp, latp, uparea = net["lonp"], net["latp"], net["uparea"]
+
+    log_flows = [np.log10(v) for v in station_flow.values() if v > 0]
+    lo, hi = float(np.percentile(log_flows, 2)), float(np.percentile(log_flows, 98))
+    if hi <= lo:
+        hi = lo + 1.0
+
+    def cell_key(rc):
+        flow = gauge_flow_by_cell.get(rc)
+        color = (
+            DISCHARGE_NODATA_COLOR
+            if not flow or flow <= 0
+            else DISCHARGE_BIN_COLORS[discharge_bin_index(np.log10(flow), lo, hi)]
+        )
+        width = reach_width_for_uparea(float(uparea[rc]) / 1e6)
+        return (color, width)
+
+    chains = build_reach_chains(cells, downstream_of, indegree, predecessor, cell_key)
+    with_hover = len(cells) <= MAX_REACH_HOVER_CELLS
+
+    buckets = {}
+    for key, chain_cells in chains:
+        b = buckets.setdefault(key, {"lon": [], "lat": [], "text": []})
+        b["lon"].extend([round(float(lonp[rc]), 4) for rc in chain_cells] + [None])
+        b["lat"].extend([round(float(latp[rc]), 4) for rc in chain_cells] + [None])
+        if with_hover:
+            for rc in chain_cells:
+                flow = gauge_flow_by_cell.get(rc)
+                flow_txt = "n/a (no downstream gauge)" if not flow else f"{flow:,.0f} m³/s"
+                ua = float(uparea[rc]) / 1e6
+                b["text"].append(f"Upstream area: {ua:.0f} km²<br>Mean discharge (downstream gauge): {flow_txt}")
+            b["text"].append(None)
+
+    n_traces = 0
+    for (color, width), b in buckets.items():
+        fig.add_trace(
+            go.Scattergeo(
+                lon=b["lon"],
+                lat=b["lat"],
+                mode="lines",
+                line=dict(color=color, width=width),
+                text=b["text"] if with_hover else None,
+                hoverinfo="text" if with_hover else "skip",
+                showlegend=False,
+            )
+        )
+        n_traces += 1
+
+    # Invisible dummy trace purely to render a Plotly colourbar with real
+    # discharge tick labels: a Scattergeo *line* trace can only ever be one
+    # flat colour, so the bucketed reach lines above can't carry a
+    # continuous colourbar themselves.
+    tick_values = nice_discharge_ticks(lo, hi)
+    fig.add_trace(
+        go.Scattergeo(
+            lon=[records[0]["lon"]],
+            lat=[records[0]["lat"]],
+            mode="markers",
+            marker=dict(
+                size=0.001,
+                opacity=0,
+                color=[lo],
+                cmin=lo,
+                cmax=hi,
+                colorscale=DISCHARGE_COLORSCALE,
+                showscale=True,
+                colorbar=dict(
+                    title="Mean discharge (m³/s)",
+                    tickvals=[np.log10(v) for v in tick_values],
+                    ticktext=[f"{v:,.0f}" for v in tick_values],
+                    len=0.6,
+                    x=1.0,
+                ),
+            ),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+    )
+
+    print(
+        f"Added discharge reach network: {len(cells):,} cells across {len(basin_ids):,} basins, "
+        f"{n_traces} traces",
+        flush=True,
+    )
+
+
 def hover_text(record, args):
     metric = args.metric
 
@@ -805,10 +1305,16 @@ def build_map(records, args):
         )
 
     if args.colour_mode == "best_metric":
+        if not args.no_reach_network:
+            add_discharge_reach_layer(fig, records, args)
         add_best_metric_layers(fig, records, args)
     elif args.colour_mode == "best_experiment":
+        if not args.no_reach_network:
+            add_discharge_reach_layer(fig, records, args)
         add_best_experiment_layers(fig, records, args)
     elif args.colour_mode == "experiment_difference":
+        if not args.no_reach_network:
+            add_reach_layers(fig, records, args)
         add_difference_layers(fig, records, args)
     else:
         raise ValueError(f"Unsupported colour mode: {args.colour_mode}")
@@ -1163,6 +1669,24 @@ th, td {
     display: block;
   }
 }
+
+/* Optional "flowing river" effect for the reach-network layer (experiment_
+   difference dashboards only): animate the dash pattern along each reach
+   line's own SVG path so movement reads as downstream direction. Targets
+   Plotly's internal class for line-mode geo traces (stable for the pinned
+   plotly-3.5.0 build above); if a future Plotly version renames it, this
+   simply has no visible effect rather than breaking anything.
+
+   Gating is per-path (.flow-ok, added by JS below), not a single map-wide
+   average: reach traces are bucketed by (colour, width), and at any given
+   zoom some buckets' chains average 100px+ while others sit at 5-6px, so a
+   single global average let some buckets flow smoothly while others kept
+   flickering right alongside them. */
+body.flow-enabled .geolayer path.js-line.flow-ok {
+  stroke-dasharray: 6 6;
+  animation: flow-dash 900ms linear infinite;
+}
+@keyframes flow-dash { to { stroke-dashoffset: -12; } }
 </style>
 </head>
 <body>
@@ -1182,6 +1706,11 @@ th, td {
     </div>
 
     <span id="zoom-status"></span>
+
+    <label id="flow-toggle-wrap" style="display:none;">
+      <input id="flow-toggle" type="checkbox" checked>
+      Animate river flow direction
+    </label>
   </div>
 
   <div id="transport-warning" class="warning"></div>
@@ -1224,6 +1753,7 @@ const EXPERIMENT_COLOURS = __PALETTE_JSON__;
 const DATA_ROOT = "__DATA_ROOT__";
 const SELECTED_METRIC = "__METRIC__";
 const COLOUR_MODE = "__COLOUR_MODE__";
+const HAS_REACH_NETWORK = __HAS_REACH_NETWORK__;
 const CONTROL_EXPVER = "__CONTROL_EXPVER__";
 const BEST_EXPERIMENT_MIN_IMPROVEMENT = __BEST_EXPERIMENT_MIN_IMPROVEMENT__;
 const WARN_SCALE_LOW = __WARN_SCALE_LOW__;
@@ -2466,7 +2996,7 @@ async function loadAndPlotStation(i, options = {}) {
   updateSelectedStationMarker(station);
 
   if (options.zoomOnLoad) {
-    zoomToStationBox(station, 5);
+    zoomToStationBox(station, 10);
   }
 
   const hydroDiv = document.getElementById("hydrograph");
@@ -2693,8 +3223,46 @@ mapDiv.on("plotly_click", function(data) {
   const i = Number(pt.customdata);
   if (!Number.isInteger(i)) return;
 
-  loadAndPlotStation(i);
+  loadAndPlotStation(i, {zoomOnLoad: true});
 });
+
+// River-reach flow animation (experiment_difference dashboards only): a
+// dash-offset CSS animation restarts its pattern at every SVG subpath, so
+// once individual visible reach pieces get shorter than one dash+gap cycle
+// (unavoidable once zoomed out past a single basin) it reads as thousands
+// of segments flickering in near-unison rather than flowing. Rather than
+// pick one dash size that's wrong everywhere, measure the actually-
+// rendered subpaths after every redraw and only animate once they're long
+// enough to look right; this self-adjusts as the user zooms in and out
+// instead of needing a fixed zoom-level threshold.
+if (HAS_REACH_NETWORK) {
+  const flowToggleWrap = document.getElementById("flow-toggle-wrap");
+  const flowToggle = document.getElementById("flow-toggle");
+  flowToggleWrap.style.display = "inline-block";
+
+  const FLOW_MIN_PX = 8;
+
+  // Each reach trace is one (colour, width) bucket's worth of chains, and
+  // at any given zoom some buckets' chains average 100px+ while others
+  // sit at 5-6px (e.g. small tributaries vs. a basin's main stem) -- so
+  // gate the animation per path, not on one map-wide average, or buckets
+  // below the threshold keep flickering even once the "average" clears it.
+  function updateFlowClass() {
+    document.body.classList.toggle("flow-enabled", flowToggle.checked);
+    const paths = document.querySelectorAll(".geolayer path.js-line");
+    for (const p of paths) {
+      const d = p.getAttribute("d") || "";
+      const subCount = (d.match(/M/g) || []).length;
+      const avgLen = subCount > 0 ? p.getTotalLength() / subCount : 0;
+      p.classList.toggle("flow-ok", avgLen > FLOW_MIN_PX);
+    }
+  }
+
+  flowToggle.addEventListener("change", updateFlowClass);
+  mapDiv.on("plotly_relayout", function() { window.setTimeout(updateFlowClass, 50); });
+  mapDiv.on("plotly_redraw", function() { window.setTimeout(updateFlowClass, 50); });
+  window.setTimeout(updateFlowClass, 300);
+}
 </script>
 </body>
 </html>
@@ -2710,6 +3278,7 @@ mapDiv.on("plotly_click", function(data) {
         .replace("__DATA_ROOT__", data_root_js)
         .replace("__METRIC__", args.metric)
         .replace("__COLOUR_MODE__", args.colour_mode)
+        .replace("__HAS_REACH_NETWORK__", "false" if args.no_reach_network else "true")
         .replace("__CONTROL_EXPVER__", str(args.control_expver))
         .replace("__BEST_EXPERIMENT_MIN_IMPROVEMENT__", str(float(args.best_experiment_min_improvement)))
         .replace("__MAP_HEIGHT_VH__", str(float(args.map_height_vh)))
