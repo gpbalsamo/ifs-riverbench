@@ -2422,20 +2422,25 @@ function zoomToPreset(preset) {
   scheduleEcdfUpdate();
 }
 
-function zoomToStationBox(station, halfSpanDegrees = 5) {
+function zoomToStationBox(station, halfSpanLatDegrees = 15, halfSpanLonDegrees = 30) {
   if (!station) return;
 
   const lat = clampLatitude(station.lat);
   const lon = normalizeLongitude(station.lon);
   if (lat === null || lon === null) return;
 
-  const span = Number(halfSpanDegrees);
-  if (!Number.isFinite(span) || span <= 0) return;
+  // 2:1 lon:lat ratio matches the 360x180 aspect of the full equirectangular
+  // globe, so a zoomed-in box keeps the same visual proportions as "the
+  // globe" rather than looking squashed or stretched.
+  const latSpan = Number(halfSpanLatDegrees);
+  const lonSpan = Number(halfSpanLonDegrees);
+  if (!Number.isFinite(latSpan) || latSpan <= 0) return;
+  if (!Number.isFinite(lonSpan) || lonSpan <= 0) return;
 
-  const lat0 = clampLatitude(lat - span);
-  const lat1 = clampLatitude(lat + span);
-  const lon0 = Math.max(-180, lon - span);
-  const lon1 = Math.min(180, lon + span);
+  const lat0 = clampLatitude(lat - latSpan);
+  const lat1 = clampLatitude(lat + latSpan);
+  const lon0 = Math.max(-180, lon - lonSpan);
+  const lon1 = Math.min(180, lon + lonSpan);
 
   const update = {
     "geo.center.lon": lon,
@@ -2996,7 +3001,7 @@ async function loadAndPlotStation(i, options = {}) {
   updateSelectedStationMarker(station);
 
   if (options.zoomOnLoad) {
-    zoomToStationBox(station, 10);
+    zoomToStationBox(station, 15, 30);
   }
 
   const hydroDiv = document.getElementById("hydrograph");
