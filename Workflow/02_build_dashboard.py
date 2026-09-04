@@ -515,23 +515,26 @@ def metric_class(metric, value):
     raise ValueError(f"Unsupported metric: {metric}")
 
 
+# Colour-blind-safe ordinal ramp: single hue (blue), light = poor to dark =
+# good. Avoids red/green (and red/gold), which are indistinguishable under
+# protanopia/deuteranopia.
 def best_metric_class_config(metric):
     if metric == "kge":
         return [
             {"class": "missing", "label": "No KGE", "color": "lightgrey", "size": 5, "opacity": 0.35},
-            {"class": "very_poor", "label": "Best KGE < -0.41", "color": "red", "size": 7, "opacity": 0.85},
-            {"class": "poor", "label": "-0.41 <= best KGE <= 0", "color": "gold", "size": 7, "opacity": 0.85},
-            {"class": "moderate", "label": "0 < best KGE <= 0.5", "color": "limegreen", "size": 7, "opacity": 0.85},
-            {"class": "good", "label": "Best KGE > 0.5", "color": "darkgreen", "size": 8, "opacity": 0.9},
+            {"class": "very_poor", "label": "Best KGE < -0.41", "color": "#86b6ef", "size": 7, "opacity": 0.85},
+            {"class": "poor", "label": "-0.41 <= best KGE <= 0", "color": "#5598e7", "size": 7, "opacity": 0.85},
+            {"class": "moderate", "label": "0 < best KGE <= 0.5", "color": "#256abf", "size": 7, "opacity": 0.85},
+            {"class": "good", "label": "Best KGE > 0.5", "color": "#104281", "size": 8, "opacity": 0.9},
         ]
 
     if metric == "correlation":
         return [
             {"class": "missing", "label": "No correlation", "color": "lightgrey", "size": 5, "opacity": 0.35},
-            {"class": "very_poor", "label": "Best correlation < 0.3", "color": "red", "size": 7, "opacity": 0.85},
-            {"class": "poor", "label": "0.3 <= best correlation <= 0.5", "color": "gold", "size": 7, "opacity": 0.85},
-            {"class": "moderate", "label": "0.5 < best correlation <= 0.7", "color": "limegreen", "size": 7, "opacity": 0.85},
-            {"class": "good", "label": "Best correlation > 0.7", "color": "darkgreen", "size": 8, "opacity": 0.9},
+            {"class": "very_poor", "label": "Best correlation < 0.3", "color": "#86b6ef", "size": 7, "opacity": 0.85},
+            {"class": "poor", "label": "0.3 <= best correlation <= 0.5", "color": "#5598e7", "size": 7, "opacity": 0.85},
+            {"class": "moderate", "label": "0.5 < best correlation <= 0.7", "color": "#256abf", "size": 7, "opacity": 0.85},
+            {"class": "good", "label": "Best correlation > 0.7", "color": "#104281", "size": 8, "opacity": 0.9},
         ]
 
     raise ValueError(f"Unsupported metric: {metric}")
@@ -561,17 +564,23 @@ def difference_class(value, threshold):
     return "large_improvement"
 
 
+# Colour-blind-safe diverging pair: red <-> blue with a grey neutral midpoint,
+# instead of red <-> green. Red vs. blue stays distinguishable under
+# protanopia/deuteranopia, unlike red vs. green (validated with
+# dataviz/scripts/validate_palette.js: worst adjacent hue-pair CVD Delta E
+# 20.3, normal-vision floor 24.3 -- both clear of the colour-blind-safety
+# thresholds).
 def difference_class_config(metric, ref_expver, target_expver, threshold):
     threshold = abs(float(threshold))
     label = f"{target_expver} - {ref_expver}"
 
     return [
         {"class": "missing", "label": f"No {metric} difference", "color": "lightgrey", "size": 5, "opacity": 0.35},
-        {"class": "large_degradation", "label": f"{label} <= -0.20", "color": "darkred", "size": 8, "opacity": 0.9},
-        {"class": "moderate_degradation", "label": f"-0.20 < {label} <= -{threshold:g}", "color": "red", "size": 7, "opacity": 0.85},
+        {"class": "large_degradation", "label": f"{label} <= -0.20", "color": "#7a1f1e", "size": 8, "opacity": 0.9},
+        {"class": "moderate_degradation", "label": f"-0.20 < {label} <= -{threshold:g}", "color": "#e34948", "size": 7, "opacity": 0.85},
         {"class": "neutral", "label": f"|{label}| < {threshold:g} (no meaningful difference)", "color": "lightgrey", "size": 6, "opacity": 0.7},
-        {"class": "moderate_improvement", "label": f"{threshold:g} <= {label} < 0.20", "color": "limegreen", "size": 7, "opacity": 0.85},
-        {"class": "large_improvement", "label": f"{label} >= 0.20", "color": "darkgreen", "size": 8, "opacity": 0.9},
+        {"class": "moderate_improvement", "label": f"{threshold:g} <= {label} < 0.20", "color": "#5598e7", "size": 7, "opacity": 0.85},
+        {"class": "large_improvement", "label": f"{label} >= 0.20", "color": "#104281", "size": 8, "opacity": 0.9},
     ]
 
 
