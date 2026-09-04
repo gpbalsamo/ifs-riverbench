@@ -515,26 +515,30 @@ def metric_class(metric, value):
     raise ValueError(f"Unsupported metric: {metric}")
 
 
-# Colour-blind-safe ordinal ramp: single hue (blue), light = poor to dark =
-# good. Avoids red/green (and red/gold), which are indistinguishable under
-# protanopia/deuteranopia.
+# Colour-blind-safe "traffic light" (bad/moderate/good), using an Okabe-Ito-
+# derived triple instead of red/gold/green: two dark-red/vermillion shades
+# for the two bad classes, bluish-green (not pure green) for moderate, blue
+# for good. Pure red+green is indistinguishable under protanopia/
+# deuteranopia; vermillion+bluish-green+blue stays distinguishable (validated
+# with dataviz/scripts/validate_palette.js: worst adjacent CVD Delta E 9.1,
+# normal-vision floor 18.7 -- both clear the colour-blind-safety thresholds).
 def best_metric_class_config(metric):
     if metric == "kge":
         return [
             {"class": "missing", "label": "No KGE", "color": "lightgrey", "size": 5, "opacity": 0.35},
-            {"class": "very_poor", "label": "Best KGE < -0.41", "color": "#86b6ef", "size": 7, "opacity": 0.85},
-            {"class": "poor", "label": "-0.41 <= best KGE <= 0", "color": "#5598e7", "size": 7, "opacity": 0.85},
-            {"class": "moderate", "label": "0 < best KGE <= 0.5", "color": "#256abf", "size": 7, "opacity": 0.85},
-            {"class": "good", "label": "Best KGE > 0.5", "color": "#104281", "size": 8, "opacity": 0.9},
+            {"class": "very_poor", "label": "Best KGE < -0.41", "color": "#6b2400", "size": 7, "opacity": 0.85},
+            {"class": "poor", "label": "-0.41 <= best KGE <= 0", "color": "#e37222", "size": 7, "opacity": 0.85},
+            {"class": "moderate", "label": "0 < best KGE <= 0.5", "color": "#009e73", "size": 7, "opacity": 0.85},
+            {"class": "good", "label": "Best KGE > 0.5", "color": "#0072b2", "size": 8, "opacity": 0.9},
         ]
 
     if metric == "correlation":
         return [
             {"class": "missing", "label": "No correlation", "color": "lightgrey", "size": 5, "opacity": 0.35},
-            {"class": "very_poor", "label": "Best correlation < 0.3", "color": "#86b6ef", "size": 7, "opacity": 0.85},
-            {"class": "poor", "label": "0.3 <= best correlation <= 0.5", "color": "#5598e7", "size": 7, "opacity": 0.85},
-            {"class": "moderate", "label": "0.5 < best correlation <= 0.7", "color": "#256abf", "size": 7, "opacity": 0.85},
-            {"class": "good", "label": "Best correlation > 0.7", "color": "#104281", "size": 8, "opacity": 0.9},
+            {"class": "very_poor", "label": "Best correlation < 0.3", "color": "#6b2400", "size": 7, "opacity": 0.85},
+            {"class": "poor", "label": "0.3 <= best correlation <= 0.5", "color": "#e37222", "size": 7, "opacity": 0.85},
+            {"class": "moderate", "label": "0.5 < best correlation <= 0.7", "color": "#009e73", "size": 7, "opacity": 0.85},
+            {"class": "good", "label": "Best correlation > 0.7", "color": "#0072b2", "size": 8, "opacity": 0.9},
         ]
 
     raise ValueError(f"Unsupported metric: {metric}")
