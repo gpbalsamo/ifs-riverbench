@@ -10,6 +10,15 @@ At a high level, you run a pipeline that:
 3. computes benchmark metrics;
 4. builds visual dashboards to compare experiments.
 
+## Data availability
+
+This repository ships code only. Two inputs are not included and are not required to explore the code:
+
+- **Station metadata** (CaMa-Flood lookup CSV) — internal ECMWF asset.
+- **Observed discharge** (the Qobs NetCDF/Zarr archive) — internal ECMWF asset, not redistributed here.
+
+Both are available on request — open an issue on this repository or contact the maintainer directly. Paths shown below are examples; point `--station-file` / `--obs-file` at wherever you place your own copies.
+
 ## Quick Start 
 
 If you are new to the workflow, follow these exact steps first.
@@ -96,7 +105,7 @@ Typical output path:
 
 ### Station metadata
 
-Expected CSV contains station location and CaMa-Flood lookup columns, for example:
+Not distributed with this repository — see [Data availability](#data-availability). Expected CSV contains station location and CaMa-Flood lookup columns, for example:
 
 ```text
 Id, Name, StatLon, StatLat, ProvArea, River, Country,
@@ -106,44 +115,18 @@ Cama6lon, Cama6lat, Cama6area, ...
 Cama15lon, Cama15lat, Cama15area, ...
 ```
 
-Default path:
-
-```text
-/perm/pad/flood_cases/Stations/allstations_V1_3.csv
-```
-
-Typical path:
+Pass its location with `--station-file`, e.g.:
 
 ```text
 /perm/${USER}/flood_cases/Stations/allstations_V1_2.csv
 ```
 
-
 ### Observed discharge
 
-Use NetCDF or Zarr. Zarr is recommended for speed in long multi-experiment runs.
-
-Default NetCDF:
-
-```text
-/perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
-```
-
-Typical path:
+Not distributed with this repository — see [Data availability](#data-availability). Once you have your own copy, use NetCDF or Zarr; Zarr is recommended for speed in long multi-experiment runs. Pass its location with `--obs-file`, e.g.:
 
 ```text
 /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
-```
-
-Recommended Zarr:
-
-```text
-/perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
-```
-
-Typical path:
-
-```text
 /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 ```
 
@@ -207,7 +190,7 @@ python3 01_extract_hydrographs.py \
   --date-end 20221231 \
   --resolution 15 \
   --valid-time-shift-hours -24 \
-  --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
+  --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.zarr
 ```
 
 With NetCDF observations:
@@ -219,7 +202,7 @@ python3 01_extract_hydrographs.py \
   --date-end 20221231 \
   --resolution 15 \
   --valid-time-shift-hours -24 \
-  --obs-file /perm/pad/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
+  --obs-file /perm/${USER}/flood_cases/Stations/Qobs_24_1980-2025_withcaravan.nc
 ```
 
 Why `--valid-time-shift-hours -24` is often needed: monthly archive files are stored with `date=first day of month`, while each `step` represents a later valid day.
