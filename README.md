@@ -19,6 +19,20 @@ This repository ships code only. Two inputs are not included and are not require
 
 Both are available on request — open an issue on this repository or contact the maintainer directly. Paths shown below are examples; point `--station-file` / `--obs-file` at wherever you place your own copies.
 
+## Live demo
+
+```text
+https://gpbalsamo.github.io/discharge-dashboard/
+```
+
+More dashboards, including the sibling `ifs-floodbench` and `ifs-landbench` benchmarks, are listed at [gpbalsamo.github.io](https://gpbalsamo.github.io).
+
+ECMWF-internal mirror:
+
+```text
+https://sites.ecmwf.int/pad/riverbench/discharge-dashboard/
+```
+
 ## Quick Start 
 
 If you are new to the workflow, follow these exact steps first.
