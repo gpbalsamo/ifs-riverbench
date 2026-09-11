@@ -3,6 +3,7 @@
 dashboard_data/
 global_station_dashboard_*.html
 site_bundle/
+public_site_bundle/
 
 # Local/cache outputs
 *.zarr/

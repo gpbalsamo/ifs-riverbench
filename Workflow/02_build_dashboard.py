@@ -2888,13 +2888,18 @@ function stationInfo(station, payloadsByExpver) {
 
   for (const expver of EXPVERS) {
     const payload = payloadsByExpver[expver];
+    if (!payload || !payload.obs) continue;
 
-    if (payload && payload.obs) {
+    if (payload.obs.restricted) {
+      s += "<div class='small warning'><b>Observed streamflow:</b><br>" +
+           "Not shown in this public demo &mdash; this station's observations are not " +
+           "from an open-access source. GRDC-sourced stations show observations directly.</div>";
+    } else {
       const obsPath = sanitizeUserPath(payload.obs.file);
       s += "<div class='small'><b>Obs file:</b><br><span class='code'>" +
            esc(obsPath) + "</span></div>";
-      break;
     }
+    break;
   }
 
   return s;
@@ -3092,7 +3097,7 @@ async function loadAndPlotStation(i, options = {}) {
     ? chooseObsPayload(payloadsByExpver, activeExpvers)
     : null;
 
-  if (obs) {
+  if (obs && !obs.restricted) {
     const obsSeries = normaliseSeries(obs.time, obs.values);
     traces.push({
       x: obsSeries.time,
